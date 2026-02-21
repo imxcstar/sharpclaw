@@ -1,7 +1,9 @@
 using Microsoft.Extensions.AI;
 using System.Text;
 
-namespace sharpclaw;
+using sharpclaw.Agents;
+
+namespace sharpclaw.Chat;
 
 /// <summary>
 /// 滑动窗口聊天裁剪器：集成记忆管线。

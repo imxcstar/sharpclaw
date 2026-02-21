@@ -1,8 +1,8 @@
 using System;
 using System.ComponentModel;
-using Tinvo.Core.TaskManagement;
+using sharpclaw.Core.TaskManagement;
 
-namespace Tinvo.Commands;
+namespace sharpclaw.Commands;
 
 /// <summary>
 /// Process execution commands (dotnet, node, docker).

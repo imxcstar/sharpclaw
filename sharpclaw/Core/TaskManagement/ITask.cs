@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Tinvo.Core.TaskManagement;
+namespace sharpclaw.Core.TaskManagement;
 
 /// <summary>
 /// Represents the kind of managed task.

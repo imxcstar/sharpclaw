@@ -3,7 +3,9 @@ using System.ComponentModel;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace sharpclaw;
+using sharpclaw.Memory;
+
+namespace sharpclaw.Agents;
 
 /// <summary>
 /// 主动记忆助手：每轮对话后，先检索相关记忆，再通过工具调用决定保存/更新/删除。

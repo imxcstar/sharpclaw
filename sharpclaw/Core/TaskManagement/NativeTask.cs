@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace Tinvo.Core.TaskManagement;
+namespace sharpclaw.Core.TaskManagement;
 
 /// <summary>
 /// Interface for native task output operations.

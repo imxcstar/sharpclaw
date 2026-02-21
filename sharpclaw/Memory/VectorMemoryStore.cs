@@ -2,14 +2,26 @@ using Microsoft.Extensions.AI;
 using System.Numerics.Tensors;
 using System.Text.Json;
 
-namespace sharpclaw;
+using sharpclaw.Clients;
 
+namespace sharpclaw.Memory;
+
+/// <summary>
+/// 向量存储的记忆条目包装：记忆条目 + 嵌入向量。
+/// </summary>
 internal class StoredMemoryEntry
 {
+    /// <summary>记忆条目</summary>
     public MemoryEntry Entry { get; set; } = new();
+
+    /// <summary>嵌入向量（由 embedding 模型生成）</summary>
     public float[]? Vector { get; set; }
 }
 
+/// <summary>
+/// 基于向量的记忆存储：使用嵌入模型生成向量，余弦相似度检索，可选重排序。
+/// 支持语义去重（相似度超过阈值时合并而非新增）和持久化到 JSON 文件。
+/// </summary>
 public class VectorMemoryStore : IMemoryStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

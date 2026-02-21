@@ -7,9 +7,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Tinvo.Core.TaskManagement;
+using sharpclaw.Core.TaskManagement;
 
-namespace Tinvo.Commands;
+namespace sharpclaw.Commands;
 
 /// <summary>
 /// File system operation commands.

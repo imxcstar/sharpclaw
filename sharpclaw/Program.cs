@@ -5,14 +5,15 @@ using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
 using OpenAI.Responses;
-using sharpclaw;
+using sharpclaw.Agents;
+using sharpclaw.Chat;
+using sharpclaw.Clients;
+using sharpclaw.Commands;
+using sharpclaw.Core.TaskManagement;
+using sharpclaw.Memory;
 using System.ComponentModel;
-using System.Diagnostics;
-using System.Net;
 using System.Text;
 using System.Text.Json;
-using Tinvo.Commands;
-using Tinvo.Core.TaskManagement;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 // Initialize task manager

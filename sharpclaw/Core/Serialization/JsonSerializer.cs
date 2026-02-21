@@ -1,7 +1,7 @@
 using System;
 using ToonSharp;
 
-namespace Tinvo.Core.Serialization;
+namespace sharpclaw.Core.Serialization;
 
 /// <summary>
 /// JSON serialization utility using ToonSharp.

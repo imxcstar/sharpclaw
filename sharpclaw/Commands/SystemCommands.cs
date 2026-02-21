@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
-using Tinvo.Core.TaskManagement;
+using sharpclaw.Core.TaskManagement;
 
-namespace Tinvo.Commands;
+namespace sharpclaw.Commands;
 
 /// <summary>
 /// System information and utility commands.

@@ -3,10 +3,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace sharpclaw;
+namespace sharpclaw.Clients;
 
+/// <summary>重排序结果：原始索引 + 相关度分数</summary>
 public record RerankResult(int Index, double RelevanceScore);
 
+/// <summary>
+/// 阿里云 DashScope 重排序客户端：对候选文档按查询相关度重新排序。
+/// </summary>
 public class DashScopeRerankClient
 {
     private static readonly Uri Endpoint = new("https://dashscope.aliyuncs.com/compatible-api/v1/reranks");

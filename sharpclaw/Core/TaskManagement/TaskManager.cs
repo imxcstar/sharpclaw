@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace Tinvo.Core.TaskManagement;
+namespace sharpclaw.Core.TaskManagement;
 
 /// <summary>
 /// Manages all background tasks (both process and native).

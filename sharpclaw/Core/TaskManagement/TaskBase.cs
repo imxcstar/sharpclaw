@@ -3,7 +3,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Tinvo.Core.TaskManagement;
+namespace sharpclaw.Core.TaskManagement;
 
 /// <summary>
 /// Base class for managed tasks providing common functionality.

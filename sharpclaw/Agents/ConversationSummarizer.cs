@@ -1,7 +1,7 @@
 using Microsoft.Extensions.AI;
 using System.Text;
 
-namespace sharpclaw;
+namespace sharpclaw.Agents;
 
 /// <summary>
 /// 总结性回忆助手：当滑动窗口裁剪掉旧消息时，将被裁剪的内容总结为精简摘要注入回上下文，

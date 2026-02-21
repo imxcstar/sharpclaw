@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Tinvo.Core.TaskManagement;
+namespace sharpclaw.Core.TaskManagement;
 
 /// <summary>
 /// Manages an external process as a task.

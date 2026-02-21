@@ -5,10 +5,10 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Tinvo.Core.Serialization;
-using Tinvo.Core.TaskManagement;
+using sharpclaw.Core.Serialization;
+using sharpclaw.Core.TaskManagement;
 
-namespace Tinvo.Commands;
+namespace sharpclaw.Commands;
 
 /// <summary>
 /// Base class for all command implementations.

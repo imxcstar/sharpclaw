@@ -10,9 +10,9 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using Tinvo.Core.TaskManagement;
+using sharpclaw.Core.TaskManagement;
 
-namespace Tinvo.Commands;
+namespace sharpclaw.Commands;
 
 /// <summary>
 /// HTTP request commands.
