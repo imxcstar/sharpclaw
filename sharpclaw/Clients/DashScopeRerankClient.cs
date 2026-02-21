@@ -13,16 +13,18 @@ public record RerankResult(int Index, double RelevanceScore);
 /// </summary>
 public class DashScopeRerankClient
 {
-    private static readonly Uri Endpoint = new("https://dashscope.aliyuncs.com/compatible-api/v1/reranks");
+    private static readonly Uri DefaultEndpoint = new("https://dashscope.aliyuncs.com/compatible-api/v1/reranks");
 
     private readonly HttpClient _httpClient;
+    private readonly Uri _endpoint;
     private readonly string _model;
 
-    public DashScopeRerankClient(HttpClient httpClient, string apiKey, string model = "gte-rerank-v2")
+    public DashScopeRerankClient(HttpClient httpClient, string apiKey, string model = "gte-rerank-v2", Uri? endpoint = null)
     {
         _httpClient = httpClient;
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         _model = model;
+        _endpoint = endpoint ?? DefaultEndpoint;
     }
 
     public async Task<IReadOnlyList<RerankResult>> RerankAsync(
@@ -41,7 +43,7 @@ public class DashScopeRerankClient
 
         var json = JsonSerializer.Serialize(request);
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
-        using var response = await _httpClient.PostAsync(Endpoint, content, cancellationToken);
+        using var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);

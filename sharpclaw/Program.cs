@@ -1,12 +1,18 @@
-
-using Anthropic;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using sharpclaw.Agents;
-using sharpclaw.Clients;
 using sharpclaw.Commands;
+using sharpclaw.Core;
 using sharpclaw.Core.TaskManagement;
-using sharpclaw.Memory;
+
+// ── 配置检测 ──
+if (args.Contains("config") || !SharpclawConfig.Exists())
+{
+    await ConfigWizard.RunAsync();
+    if (args.Contains("config"))
+        return;
+}
+
+var config = SharpclawConfig.Load();
 
 // ── 基础设施 ──
 var taskManager = new TaskManager();
@@ -55,31 +61,10 @@ var commandSkills = new List<Delegate>
 .ToArray();
 
 // ── AI 客户端 ──
-var aiClient = new AnthropicClient
-{
-    AuthToken = Environment.GetEnvironmentVariable("OPENAI_API_KEY")!,
-    BaseUrl = "https://api.routin.ai/plan",
-}.AsIChatClient("claude-opus-4.6");
+var aiClient = ClientFactory.CreateChatClient(config);
 
 // ── 记忆存储 ──
-var dashScopeApiKey = Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY")!;
-
-var embeddingGenerator = new OpenAIClient(
-        new System.ClientModel.ApiKeyCredential(dashScopeApiKey),
-        new OpenAIClientOptions
-        {
-            Endpoint = new Uri("https://dashscope.aliyuncs.com/compatible-mode/v1")
-        })
-    .GetEmbeddingClient("text-embedding-v4")
-    .AsIEmbeddingGenerator();
-
-var rerankClient = new DashScopeRerankClient(
-    new HttpClient(), dashScopeApiKey, "qwen3-vl-rerank");
-
-var memoryStore = new VectorMemoryStore(
-    embeddingGenerator,
-    filePath: "memories.json",
-    rerankClient: rerankClient);
+var memoryStore = ClientFactory.CreateMemoryStore(config);
 
 // ── 启动主智能体 ──
 var agent = new MainAgent(aiClient, memoryStore, commandSkills);
