@@ -9,12 +9,13 @@ dotnet build
 dotnet run --project sharpclaw
 ```
 
+First run (or `dotnet run --project sharpclaw config`) launches an interactive config wizard that writes `~/.sharpclaw/config.json`.
+
 No test project exists. Target framework is .NET 10 (`net10.0`).
 
-## Environment Variables
+## Configuration
 
-- `OPENAI_API_KEY` — Anthropic API key (routed via `api.routin.ai/plan`)
-- `DASHSCOPE_API_KEY` — Alibaba DashScope API key (embeddings + rerank)
+All client settings live in `~/.sharpclaw/config.json` (created by `ConfigWizard`). Supports three providers: Anthropic, OpenAI, Gemini. See `Core/SharpclawConfig.cs` for the schema and `Core/ClientFactory.cs` for how clients are instantiated per provider.
 
 ## Architecture
 
@@ -23,9 +24,9 @@ Sharpclaw is a console-based AI agent with long-term memory, built on `Microsoft
 ### Main Loop (`Program.cs`)
 
 Top-level statements wire everything together:
-1. Creates `AnthropicClient` → `IChatClient` for the main agent and sub-agents
-2. Creates `VectorMemoryStore` (DashScope embeddings + rerank)
-3. Creates three memory pipeline agents: `MemorySaver`, `MemoryRecaller`, `ConversationSummarizer`
+1. Detects config: runs `ConfigWizard` if `~/.sharpclaw/config.json` missing or `config` arg passed
+2. Loads `SharpclawConfig` → `ClientFactory` creates `IChatClient` + `VectorMemoryStore`
+3. Memory pipeline agents (`MemorySaver`, `MemoryRecaller`, `ConversationSummarizer`) are created inside `MainAgent`
 4. Builds a `ChatClientAgent` with `UseFunctionInvocation()` and tool functions
 5. REPL loop: recall → send → stream response → persist session to `history.json`
 
@@ -48,14 +49,14 @@ The memory system uses separate AI sub-agents, each wrapping their own `IChatCli
 
 `VectorMemoryStore` implements `IMemoryStore`:
 - Persists to `memories.json`
-- Uses DashScope `text-embedding-v4` for vector embeddings
-- Two-phase search: vector recall → optional `DashScopeRerankClient` (`qwen3-vl-rerank`)
+- Embedding model + rerank client are configurable via `~/.sharpclaw/config.json`
+- Two-phase search: vector recall → optional `DashScopeRerankClient` rerank
 - Semantic dedup on add: cosine similarity > `SimilarityThreshold` (0.85) triggers merge instead of insert
 - `UpdateAsync` re-generates embedding when content changes
 
 `InMemoryMemoryStore` exists as a simpler in-memory alternative (keyword-based search).
 
-### Command System (`Tinvo.Commands` / `Tinvo.Core`)
+### Command System (`sharpclaw.Commands`)
 
 Agent tools for system interaction, registered via `AIFunctionFactory.Create(delegate)`:
 - `FileCommands` — dir, cat, create, edit, rename, delete, find, search
@@ -66,9 +67,13 @@ Agent tools for system interaction, registered via `AIFunctionFactory.Create(del
 
 All commands extend `CommandBase` which provides `RunProcess`/`RunNative` for foreground/background execution via `TaskManager`.
 
-### Key Types in `MemoryRecaller.cs`
+### Key Types
 
-This file also defines shared types: `MemoryEntry`, `MemoryStats`, `IMemoryStore`, `InMemoryMemoryStore`.
+- `Memory/MemoryEntry.cs` — `MemoryEntry`, `MemoryStats`
+- `Memory/IMemoryStore.cs` — `IMemoryStore` interface
+- `Core/SharpclawConfig.cs` — `SharpclawConfig`, `MemoryConfig` (config model, load/save to `~/.sharpclaw/config.json`)
+- `Core/ClientFactory.cs` — Creates `IChatClient`, `IEmbeddingGenerator`, `DashScopeRerankClient`, `VectorMemoryStore` from config
+- `Core/ConfigWizard.cs` — Interactive console wizard for first-run setup
 
 ## Conventions
 

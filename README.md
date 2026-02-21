@@ -1,20 +1,19 @@
 # Sharpclaw
 
-基于 .NET 10 的 AI 智能体，具备长期记忆能力和系统操作工具。使用 Anthropic Claude 作为主模型，阿里云 DashScope 提供向量嵌入和重排序。
+基于 .NET 10 的 AI 智能体，具备长期记忆能力和系统操作工具。支持 Anthropic Claude、OpenAI、Gemini 多供应商切换，阿里云 DashScope 提供向量嵌入和重排序。
 
 ## 特性
 
+- **多供应商支持** — Anthropic / OpenAI / Gemini，通过配置文件切换，无需改代码
 - **长期记忆** — 自动保存、检索、注入对话中的重要信息，跨会话持久化
 - **记忆管线** — 四个独立子智能体协作：主动记忆保存、记忆回忆注入、滑动窗口裁剪、对话摘要
-- **向量语义搜索** — 基于 DashScope text-embedding-v4 嵌入 + qwen3-vl-rerank 重排序的两阶段检索
+- **向量语义搜索** — 两阶段检索：向量嵌入召回 + 可选重排序
 - **语义去重** — 余弦相似度超过阈值时自动合并记忆，避免冗余
 - **系统工具** — 文件操作、进程执行（dotnet/node/docker）、HTTP 请求、后台任务管理
 
 ## 环境要求
 
 - .NET 10 SDK
-- `OPENAI_API_KEY` — Anthropic API 密钥
-- `DASHSCOPE_API_KEY` — 阿里云 DashScope API 密钥
 
 ## 快速开始
 
@@ -22,7 +21,37 @@
 dotnet run --project sharpclaw
 ```
 
-启动后进入交互式对话，输入 `/exit` 或 `/quit` 退出。
+首次运行会自动进入配置引导，按提示选择 AI 供应商、填写 API Key 等信息。配置保存到 `~/.sharpclaw/config.json`。
+
+之后启动直接进入交互式对话，输入 `/exit` 或 `/quit` 退出。
+
+## 配置
+
+运行配置引导：
+
+```bash
+dotnet run --project sharpclaw config
+```
+
+配置文件结构（`~/.sharpclaw/config.json`）：
+
+```json
+{
+  "provider": "anthropic",
+  "endpoint": "https://api.anthropic.com",
+  "apiKey": "sk-xxx",
+  "model": "claude-opus-4-6",
+  "memory": {
+    "embeddingEndpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "embeddingApiKey": "sk-xxx",
+    "embeddingModel": "text-embedding-v4",
+    "rerankEnabled": true,
+    "rerankEndpoint": "https://dashscope.aliyuncs.com/compatible-api/v1/reranks",
+    "rerankApiKey": "sk-xxx",
+    "rerankModel": "qwen3-vl-rerank"
+  }
+}
+```
 
 ## 记忆管线
 
@@ -44,5 +73,6 @@ dotnet run --project sharpclaw
 
 ## 数据持久化
 
+- `~/.sharpclaw/config.json` — 供应商配置
 - `history.json` — 会话状态，启动时自动恢复
 - `memories.json` — 向量记忆库
