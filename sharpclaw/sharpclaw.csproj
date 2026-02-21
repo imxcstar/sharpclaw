@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Anthropic" Version="12.5.0" />
+		<PackageReference Include="GeminiDotnet.Extensions.AI" Version="0.22.0" />
+		<PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.260212.1" />
+		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="*-*" />
+		<PackageReference Include="ToonSharp" Version="1.0.0" />
+	</ItemGroup>
+
+</Project>
