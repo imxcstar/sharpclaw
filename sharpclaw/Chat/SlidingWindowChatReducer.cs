@@ -108,11 +108,25 @@ public class SlidingWindowChatReducer : IChatReducer
         if (conversationMessages.Count > _windowSize + _overflowBuffer)
         {
             var cutIndex = Math.Max(0, conversationMessages.Count - _windowSize);
+            var originalCutIndex = cutIndex;
+            var searchLimit = Math.Min(cutIndex + _overflowBuffer, conversationMessages.Count - 1);
 
-            while (cutIndex < conversationMessages.Count &&
+            // 向前搜索最近的 User 消息边界，但限制搜索范围避免裁剪过多
+            while (cutIndex < searchLimit &&
                    conversationMessages[cutIndex].Role != ChatRole.User)
             {
                 cutIndex++;
+            }
+
+            // 如果向前没找到，向后搜索
+            if (conversationMessages[cutIndex].Role != ChatRole.User)
+            {
+                cutIndex = originalCutIndex;
+                while (cutIndex > 0 &&
+                       conversationMessages[cutIndex].Role != ChatRole.User)
+                {
+                    cutIndex--;
+                }
             }
 
             trimmedMessages = conversationMessages.Take(cutIndex).ToList();
