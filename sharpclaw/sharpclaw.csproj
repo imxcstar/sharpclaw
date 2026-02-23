@@ -12,6 +12,7 @@
 		<PackageReference Include="GeminiDotnet.Extensions.AI" Version="0.22.0" />
 		<PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.260212.1" />
 		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="*-*" />
+		<PackageReference Include="Terminal.Gui" Version="2.0.0-develop.5039" />
 		<PackageReference Include="ToonSharp" Version="1.0.0" />
 	</ItemGroup>
 

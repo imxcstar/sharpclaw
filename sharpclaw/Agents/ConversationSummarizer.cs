@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using System.Text;
+using sharpclaw.UI;
 
 namespace sharpclaw.Agents;
 
@@ -45,6 +46,7 @@ public class ConversationSummarizer
         if (trimmedMessages.Count == 0 && _currentSummary.Length == 0)
             return null;
 
+        AppLogger.SetStatus("对话总结中...");
         // 提取被裁剪消息的文本
         var trimmedText = new StringBuilder();
         foreach (var msg in trimmedMessages)
@@ -80,7 +82,7 @@ public class ConversationSummarizer
         var response = await _client.GetResponseAsync(messages, cancellationToken: cancellationToken);
         _currentSummary = response.Text?.Trim() ?? "";
 
-        Console.WriteLine($"[AutoSummary] 已更新摘要（{_currentSummary.Length}字）");
+        AppLogger.Log($"[AutoSummary] 已更新摘要（{_currentSummary.Length}字）");
 
         return _currentSummary.Length > 0 ? FormatSummaryMessage(_currentSummary) : null;
     }

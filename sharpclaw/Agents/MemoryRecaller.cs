@@ -6,6 +6,7 @@ using System.Text;
 
 using sharpclaw.Chat;
 using sharpclaw.Memory;
+using sharpclaw.UI;
 
 namespace sharpclaw.Agents;
 
@@ -56,7 +57,7 @@ public class MemoryRecaller
         var memoryCount = await _memoryStore.CountAsync(cancellationToken);
         if (memoryCount == 0 && _currentMemories.Count == 0)
         {
-            Console.WriteLine("[AutoRecall] 记忆库为空，跳过");
+            AppLogger.Log("[AutoRecall] 记忆库为空，跳过");
             return null;
         }
 
@@ -73,7 +74,7 @@ public class MemoryRecaller
             keepCalled = true;
             keepIndices = indices.Select(i => i - 1).ToList(); // 1-indexed → 0-indexed
             var kept = indices.Length == 0 ? "无" : string.Join(",", indices);
-            Console.WriteLine($"[AutoRecall] 保留记忆: {kept}");
+            AppLogger.Log($"[AutoRecall] 保留记忆: {kept}");
             return $"已记录，保留 {indices.Length} 条记忆";
         }
 
@@ -81,7 +82,7 @@ public class MemoryRecaller
         async Task<string> SearchMemory(
             [Description("搜索关键词或短语")] string query)
         {
-            Console.WriteLine($"[AutoRecall] 搜索: {query}");
+            AppLogger.Log($"[AutoRecall] 搜索: {query}");
             var results = await _memoryStore.SearchAsync(query, MaxMemories, cancellationToken);
             foreach (var m in results)
             {
@@ -160,7 +161,7 @@ public class MemoryRecaller
                 .ToList();
         }
 
-        Console.WriteLine($"[AutoRecall] 保留 {keptMemories.Count}/{_currentMemories.Count} 条旧记忆");
+        AppLogger.Log($"[AutoRecall] 保留 {keptMemories.Count}/{_currentMemories.Count} 条旧记忆");
 
         // 合并：保留的 + 新搜索的（排除已保留的，按重要度排序，限制总数）
         var keptIds = new HashSet<string>(keptMemories.Select(m => m.Id));
@@ -175,13 +176,13 @@ public class MemoryRecaller
 
         if (_currentMemories.Count == 0)
         {
-            Console.WriteLine("[AutoRecall] 无记忆需要注入");
+            AppLogger.Log("[AutoRecall] 无记忆需要注入");
             return null;
         }
 
-        Console.WriteLine($"[AutoRecall] 最终注入 {_currentMemories.Count} 条记忆（保留{keptMemories.Count} + 新增{topNew.Count}）：");
+        AppLogger.Log($"[AutoRecall] 最终注入 {_currentMemories.Count} 条记忆（保留{keptMemories.Count} + 新增{topNew.Count}）：");
         foreach (var m in _currentMemories)
-            Console.WriteLine($"  - [{m.Category}] {m.Content}");
+            AppLogger.Log($"  - [{m.Category}] {m.Content}");
 
         return FormatMemoryMessage(_currentMemories);
     }

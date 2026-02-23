@@ -13,31 +13,42 @@ namespace sharpclaw.Core;
 /// </summary>
 public static class ClientFactory
 {
-    public static IChatClient CreateChatClient(SharpclawConfig config)
+    /// <summary>
+    /// 根据已解析的智能体配置创建 IChatClient。
+    /// </summary>
+    public static IChatClient CreateChatClient(DefaultAgentConfig resolved)
     {
-        return config.Provider.ToLowerInvariant() switch
+        return resolved.Provider.ToLowerInvariant() switch
         {
             "anthropic" => new AnthropicClient
             {
-                AuthToken = config.ApiKey,
-                BaseUrl = config.Endpoint,
-            }.AsIChatClient(config.Model),
+                AuthToken = resolved.ApiKey,
+                BaseUrl = resolved.Endpoint,
+            }.AsIChatClient(resolved.Model),
 
             "openai" => new OpenAIClient(
-                    new System.ClientModel.ApiKeyCredential(config.ApiKey),
-                    new OpenAIClientOptions { Endpoint = new Uri(config.Endpoint) })
-                .GetChatClient(config.Model)
+                    new System.ClientModel.ApiKeyCredential(resolved.ApiKey),
+                    new OpenAIClientOptions { Endpoint = new Uri(resolved.Endpoint) })
+                .GetChatClient(resolved.Model)
                 .AsIChatClient(),
 
             "gemini" => new GeminiChatClient(new GeminiClientOptions
             {
-                Endpoint = new Uri(config.Endpoint),
-                ApiKey = config.ApiKey,
-                ModelId = config.Model,
+                Endpoint = new Uri(resolved.Endpoint),
+                ApiKey = resolved.ApiKey,
+                ModelId = resolved.Model,
             }),
 
-            _ => throw new NotSupportedException($"不支持的供应商: {config.Provider}")
+            _ => throw new NotSupportedException($"不支持的供应商: {resolved.Provider}")
         };
+    }
+
+    /// <summary>
+    /// 为指定智能体创建 IChatClient（自动合并默认配置）。
+    /// </summary>
+    public static IChatClient CreateAgentClient(SharpclawConfig config, AgentConfig agent)
+    {
+        return CreateChatClient(config.ResolveAgent(agent));
     }
 
     public static IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(SharpclawConfig config)

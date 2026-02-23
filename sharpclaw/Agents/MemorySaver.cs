@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 using sharpclaw.Memory;
+using sharpclaw.UI;
 
 namespace sharpclaw.Agents;
 
@@ -72,6 +73,7 @@ public class MemorySaver
         if (conversationLog.Count == 0 && string.IsNullOrWhiteSpace(userInput))
             return;
 
+        AppLogger.SetStatus("记忆保存中...");
         // 拼接完整对话原文，供正则提取
         var fullText = string.Join("\n", conversationLog) + "\n" + userInput;
 
@@ -101,7 +103,7 @@ public class MemorySaver
                 Keywords = keywords.ToList()
             };
             await _memoryStore.AddAsync(entry, cancellationToken);
-            Console.WriteLine($"[AutoSave] 新增: [{category}](重要度:{importance}) {resolvedContent}");
+            AppLogger.Log($"[AutoSave] 新增: [{category}](重要度:{importance}) {resolvedContent}");
             return $"已保存: {resolvedContent}";
         }
 
@@ -127,7 +129,7 @@ public class MemorySaver
                 Keywords = keywords.ToList()
             };
             await _memoryStore.UpdateAsync(entry, cancellationToken);
-            Console.WriteLine($"[AutoSave] 更新 {id}: [{category}](重要度:{importance}) {resolvedContent}");
+            AppLogger.Log($"[AutoSave] 更新 {id}: [{category}](重要度:{importance}) {resolvedContent}");
             return $"已更新: {resolvedContent}";
         }
 
@@ -136,7 +138,7 @@ public class MemorySaver
             [Description("要删除的记忆 ID")] string id)
         {
             await _memoryStore.RemoveAsync(id, cancellationToken);
-            Console.WriteLine($"[AutoSave] 删除: {id}");
+            AppLogger.Log($"[AutoSave] 删除: {id}");
             return $"已删除: {id}";
         }
 
@@ -184,7 +186,7 @@ public class MemorySaver
         };
 
         var response = await _client.GetResponseAsync(messages, options, cancellationToken);
-        Console.WriteLine($"[AutoSave] 完成: {response.Text}");
+        AppLogger.Log($"[AutoSave] 完成: {response.Text}");
     }
 
     /// <summary>
@@ -204,14 +206,14 @@ public class MemorySaver
                 var match = Regex.Match(fullText, patterns[i]);
                 if (!match.Success || match.Groups.Count < 2)
                 {
-                    Console.WriteLine($"[AutoSave] 正则 [{i}] 匹配失败: {patterns[i]}");
+                    AppLogger.Log($"[AutoSave] 正则 [{i}] 匹配失败: {patterns[i]}");
                     return null;
                 }
                 values[i] = match.Groups[1].Value;
             }
             catch (RegexParseException ex)
             {
-                Console.WriteLine($"[AutoSave] 正则 [{i}] 解析错误: {ex.Message}");
+                AppLogger.Log($"[AutoSave] 正则 [{i}] 解析错误: {ex.Message}");
                 return null;
             }
         }

@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using sharpclaw.Core.TaskManagement;
+using sharpclaw.UI;
 
 namespace sharpclaw.Commands;
 
@@ -129,7 +130,7 @@ public class TaskCommands : CommandBase
 
         var moreLine = hasMoreNow ? "\n--more--" : string.Empty;
 
-        Console.WriteLine("------------[Log]---------------");
+        AppLogger.Log("------------[Log]---------------");
         var ret = $"""
 ok: true
 taskId: {taskId}
@@ -142,8 +143,8 @@ chunkLength: {chunk.Length}
 cleanedUp: {cleanedUp}
 chunk: {chunk}{moreLine}
 """;
-        Console.WriteLine(ret);
-        Console.WriteLine("------------[Log]---------------");
+        AppLogger.Log(ret);
+        AppLogger.Log("------------[Log]---------------");
         return ret;
     }
 
