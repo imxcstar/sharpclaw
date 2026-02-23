@@ -19,6 +19,17 @@ public sealed class ChatWindow : Runnable
 
     private TaskCompletionSource<string>? _inputTcs;
     private CancellationTokenSource? _aiCts;
+    private readonly TaskCompletionSource _readyTcs = new();
+
+    // 文本缓冲：降低 TextView 更新频率，避免 WordWrap 索引越界
+    private readonly object _chatBufferLock = new();
+    private string _chatBuffer = "";
+    private bool _chatFlushScheduled;
+
+    /// <summary>
+    /// 等待窗口就绪（App 已绑定）。
+    /// </summary>
+    public Task WaitForReadyAsync() => _readyTcs.Task;
 
     public ChatWindow()
     {
@@ -43,6 +54,7 @@ public sealed class ChatWindow : Runnable
             Height = Dim.Fill(),
             ReadOnly = true,
             WordWrap = true,
+            Text = "",
         };
         chatFrame.Add(_chatView);
 
@@ -64,6 +76,7 @@ public sealed class ChatWindow : Runnable
             Height = Dim.Fill(),
             ReadOnly = true,
             WordWrap = true,
+            Text = "",
         };
         logFrame.Add(_logView);
 
@@ -108,6 +121,8 @@ public sealed class ChatWindow : Runnable
         // 绑定日志和状态
         AppLogger.SetLogView(_logView);
         AppLogger.SetStatusLabel(_statusLabel);
+
+        Initialized += (_, _) => _readyTcs.TrySetResult();
     }
 
     /// <summary>
@@ -138,29 +153,62 @@ public sealed class ChatWindow : Runnable
     }
 
     /// <summary>
-    /// 追加对话文本（流式输出用，不换行）。
+    /// 追加对话文本（流式输出用）。缓冲后批量刷新。
     /// </summary>
     public void AppendChat(string text)
     {
-        App!.Invoke(() =>
-        {
-            _chatView.Text += text;
-            _chatView.MoveEnd();
-        });
+        ScheduleFlush(text);
     }
 
     /// <summary>
-    /// 追加一行对话文本。
+    /// 追加一行对话文本。缓冲后批量刷新。
     /// </summary>
     public void AppendChatLine(string text)
     {
-        App!.Invoke(() =>
+        lock (_chatBufferLock)
         {
-            var current = _chatView.Text;
-            _chatView.Text = string.IsNullOrEmpty(current)
+            _chatBuffer = string.IsNullOrEmpty(_chatBuffer)
                 ? text
-                : current + "\n" + text;
-            _chatView.MoveEnd();
+                : _chatBuffer + "\n" + text;
+        }
+
+        ScheduleFlush(null);
+    }
+
+    private void ScheduleFlush(string? text)
+    {
+        lock (_chatBufferLock)
+        {
+            if (text is not null)
+                _chatBuffer += text;
+
+            if (_chatFlushScheduled) return;
+            _chatFlushScheduled = true;
+        }
+
+        Task.Delay(100).ContinueWith(_ => FlushChatBuffer());
+    }
+
+    private void FlushChatBuffer()
+    {
+        string pending;
+        lock (_chatBufferLock)
+        {
+            pending = _chatBuffer;
+            _chatBuffer = "";
+            _chatFlushScheduled = false;
+        }
+
+        if (string.IsNullOrEmpty(pending)) return;
+
+        App?.Invoke(() =>
+        {
+            try
+            {
+                _chatView.Text += pending;
+                _chatView.MoveEnd();
+            }
+            catch (ArgumentOutOfRangeException) { }
         });
     }
 

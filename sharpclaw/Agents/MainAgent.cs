@@ -78,6 +78,8 @@ public class MainAgent
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
+        await _chatWindow.WaitForReadyAsync();
+
         _session = File.Exists(_historyPath)
             ? await _agent.DeserializeSessionAsync(
                 JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(_historyPath)))

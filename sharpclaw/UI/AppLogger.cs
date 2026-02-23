@@ -3,27 +3,60 @@ using Terminal.Gui.Views;
 namespace sharpclaw.UI;
 
 /// <summary>
-/// 全局日志路由和状态更新。
+/// 全局日志路由和状态更新。带缓冲机制降低 TextView 更新频率。
 /// </summary>
 public static class AppLogger
 {
     private static TextView? _logView;
     private static Label? _statusLabel;
 
+    private static readonly object LogBufferLock = new();
+    private static string _logBuffer = "";
+    private static bool _logFlushScheduled;
+
     public static void SetLogView(TextView logView) => _logView = logView;
     public static void SetStatusLabel(Label label) => _statusLabel = label;
 
     public static void Log(string message)
     {
-        if (_logView?.App is not { } app) return;
+        if (_logView?.App is null) return;
 
-        app.Invoke(() =>
+        lock (LogBufferLock)
         {
-            var text = _logView.Text;
-            _logView.Text = string.IsNullOrEmpty(text)
+            _logBuffer = string.IsNullOrEmpty(_logBuffer)
                 ? message
-                : text + "\n" + message;
-            _logView.MoveEnd();
+                : _logBuffer + "\n" + message;
+
+            if (_logFlushScheduled) return;
+            _logFlushScheduled = true;
+        }
+
+        Task.Delay(100).ContinueWith(_ => FlushLogBuffer());
+    }
+
+    private static void FlushLogBuffer()
+    {
+        string pending;
+        lock (LogBufferLock)
+        {
+            pending = _logBuffer;
+            _logBuffer = "";
+            _logFlushScheduled = false;
+        }
+
+        if (string.IsNullOrEmpty(pending)) return;
+
+        _logView?.App?.Invoke(() =>
+        {
+            try
+            {
+                var text = _logView.Text;
+                _logView.Text = string.IsNullOrEmpty(text)
+                    ? pending
+                    : text + "\n" + pending;
+                _logView.MoveEnd();
+            }
+            catch (ArgumentOutOfRangeException) { }
         });
     }
 
