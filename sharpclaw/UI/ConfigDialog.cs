@@ -7,7 +7,7 @@ using Terminal.Gui.Views;
 namespace sharpclaw.UI;
 
 /// <summary>
-/// 配置引导对话框：替代 Console 交互式配置。
+/// 配置引导对话框：使用 TabView 按智能体分页配置。
 /// </summary>
 public sealed class ConfigDialog : Dialog
 {
@@ -23,11 +23,17 @@ public sealed class ConfigDialog : Dialog
     private static readonly string[] ProviderNames = ["anthropic", "openai", "gemini"];
     private static readonly string[] ProviderLabels = ["Anthropic", "OpenAI", "Gemini"];
 
-    // 基础配置
-    private readonly OptionSelector _providerRadio;
-    private readonly TextField _endpointField;
-    private readonly TextField _apiKeyField;
-    private readonly TextField _modelField;
+    // 默认配置
+    private readonly OptionSelector _defaultProvider;
+    private readonly TextField _defaultEndpoint;
+    private readonly TextField _defaultApiKey;
+    private readonly TextField _defaultModel;
+
+    // 各智能体配置面板
+    private readonly AgentPanel _mainPanel;
+    private readonly AgentPanel _recallerPanel;
+    private readonly AgentPanel _saverPanel;
+    private readonly AgentPanel _summarizerPanel;
 
     // 记忆配置
     private readonly CheckBox _memoryEnabledCheck;
@@ -38,8 +44,6 @@ public sealed class ConfigDialog : Dialog
     private readonly TextField _rerankEndpointField;
     private readonly TextField _rerankApiKeyField;
     private readonly TextField _rerankModelField;
-
-    // 记忆相关控件列表（用于显示/隐藏）
     private readonly List<View> _embeddingViews = [];
     private readonly List<View> _rerankViews = [];
 
@@ -51,36 +55,58 @@ public sealed class ConfigDialog : Dialog
         Width = Dim.Percent(80);
         Height = Dim.Percent(90);
 
-        var y = 0;
-
-        // ── 供应商选择 ──
-        var providerLabel = new Label { Text = "AI 供应商:", X = 1, Y = y };
-        _providerRadio = new OptionSelector
+        var tabView = new TabView
         {
-            X = 14,
-            Y = y,
+            X = 0,
+            Y = 0,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(2),
+        };
+
+        // ── 默认配置 Tab ──
+        var defaultView = new View { Width = Dim.Fill(), Height = Dim.Fill() };
+        var y = 1;
+
+        var providerLabel = new Label { Text = "AI 供应商:", X = 1, Y = y };
+        _defaultProvider = new OptionSelector
+        {
+            X = 14, Y = y,
             Labels = ProviderLabels,
             Orientation = Orientation.Horizontal,
         };
-        _providerRadio.ValueChanged += OnProviderChanged;
+        _defaultProvider.ValueChanged += OnDefaultProviderChanged;
         y += 2;
 
-        // ── 基础配置 ──
         var endpointLabel = new Label { Text = "Endpoint:", X = 1, Y = y };
-        _endpointField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Endpoint };
+        _defaultEndpoint = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Endpoint };
         y += 2;
 
         var apiKeyLabel = new Label { Text = "API Key:", X = 1, Y = y };
-        _apiKeyField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Secret = true };
+        _defaultApiKey = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Secret = true };
         y += 2;
 
         var modelLabel = new Label { Text = "模型名称:", X = 1, Y = y };
-        _modelField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Model };
-        y += 2;
+        _defaultModel = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Model };
 
-        // ── 记忆配置 ──
-        var memSeparator = new Label { Text = "── 记忆功能 ──", X = 1, Y = y };
-        y += 1;
+        defaultView.Add(providerLabel, _defaultProvider, endpointLabel, _defaultEndpoint,
+            apiKeyLabel, _defaultApiKey, modelLabel, _defaultModel);
+
+        tabView.AddTab(new Tab { DisplayText = "默认", View = defaultView }, true);
+
+        // ── 智能体 Tabs ──
+        _mainPanel = CreateAgentPanel("主智能体", showEnabled: false);
+        _recallerPanel = CreateAgentPanel("记忆回忆");
+        _saverPanel = CreateAgentPanel("记忆保存");
+        _summarizerPanel = CreateAgentPanel("对话总结");
+
+        tabView.AddTab(new Tab { DisplayText = "主智能体", View = _mainPanel.Container }, false);
+        tabView.AddTab(new Tab { DisplayText = "记忆回忆", View = _recallerPanel.Container }, false);
+        tabView.AddTab(new Tab { DisplayText = "记忆保存", View = _saverPanel.Container }, false);
+        tabView.AddTab(new Tab { DisplayText = "对话总结", View = _summarizerPanel.Container }, false);
+
+        // ── 记忆 Tab ──
+        var memoryView = new View { Width = Dim.Fill(), Height = Dim.Fill() };
+        y = 1;
 
         _memoryEnabledCheck = new CheckBox { Text = "启用向量记忆（禁用后降级为总结压缩）", X = 1, Y = y, Value = CheckState.Checked };
         _memoryEnabledCheck.ValueChanged += OnMemoryEnabledChanged;
@@ -120,6 +146,12 @@ public sealed class ConfigDialog : Dialog
         _rerankModelField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = "qwen3-vl-rerank" };
         _rerankViews.AddRange([rerankModelLabel, _rerankModelField]);
 
+        memoryView.Add(_memoryEnabledCheck);
+        foreach (var v in _embeddingViews) memoryView.Add(v);
+        foreach (var v in _rerankViews) memoryView.Add(v);
+
+        tabView.AddTab(new Tab { DisplayText = "记忆", View = memoryView }, false);
+
         // ── 按钮 ──
         var saveButton = new Button { Text = "保存", IsDefault = true };
         saveButton.Accepting += OnSave;
@@ -134,26 +166,47 @@ public sealed class ConfigDialog : Dialog
         AddButton(saveButton);
         AddButton(cancelButton);
 
-        // 添加所有控件
-        Add(
-            providerLabel, _providerRadio,
-            endpointLabel, _endpointField,
-            apiKeyLabel, _apiKeyField,
-            modelLabel, _modelField,
-            memSeparator, _memoryEnabledCheck
-        );
-
-        foreach (var v in _embeddingViews) Add(v);
-        foreach (var v in _rerankViews) Add(v);
+        Add(tabView);
     }
 
-    private void OnProviderChanged(object? sender, ValueChangedEventArgs<int?> e)
+    /// <summary>
+    /// 从已有配置加载到 UI。
+    /// </summary>
+    public void LoadFrom(SharpclawConfig config)
+    {
+        // 默认配置
+        var providerIdx = Array.IndexOf(ProviderNames, config.Default.Provider.ToLowerInvariant());
+        if (providerIdx >= 0) _defaultProvider.Value = providerIdx;
+        _defaultEndpoint.Text = config.Default.Endpoint;
+        _defaultApiKey.Text = config.Default.ApiKey;
+        _defaultModel.Text = config.Default.Model;
+
+        // 各智能体
+        LoadAgentPanel(_mainPanel, config.Agents.Main);
+        LoadAgentPanel(_recallerPanel, config.Agents.Recaller);
+        LoadAgentPanel(_saverPanel, config.Agents.Saver);
+        LoadAgentPanel(_summarizerPanel, config.Agents.Summarizer);
+
+        // 记忆
+        _memoryEnabledCheck.Value = config.Memory.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _embeddingEndpointField.Text = config.Memory.EmbeddingEndpoint;
+        _embeddingApiKeyField.Text = config.Memory.EmbeddingApiKey;
+        _embeddingModelField.Text = config.Memory.EmbeddingModel;
+        _rerankEnabledCheck.Value = config.Memory.RerankEnabled ? CheckState.Checked : CheckState.UnChecked;
+        _rerankEndpointField.Text = config.Memory.RerankEndpoint;
+        _rerankApiKeyField.Text = config.Memory.RerankApiKey;
+        _rerankModelField.Text = config.Memory.RerankModel;
+
+        OnMemoryEnabledChanged(null, null!);
+    }
+
+    private void OnDefaultProviderChanged(object? sender, ValueChangedEventArgs<int?> e)
     {
         var idx = e.NewValue ?? 0;
         var name = ProviderNames[idx];
         var defaults = Providers[name];
-        _endpointField.Text = defaults.Endpoint;
-        _modelField.Text = defaults.Model;
+        _defaultEndpoint.Text = defaults.Endpoint;
+        _defaultModel.Text = defaults.Model;
     }
 
     private void OnMemoryEnabledChanged(object? sender, ValueChangedEventArgs<CheckState> e)
@@ -173,22 +226,31 @@ public sealed class ConfigDialog : Dialog
     {
         e.Handled = true;
 
-        if (string.IsNullOrWhiteSpace(_apiKeyField.Text))
+        if (string.IsNullOrWhiteSpace(_defaultApiKey.Text))
         {
-            MessageBox.ErrorQuery(App!, "错误", "API Key 不能为空", "确定");
+            MessageBox.ErrorQuery(App!, "错误", "默认 API Key 不能为空", "确定");
             return;
         }
 
-        var providerName = ProviderNames[_providerRadio.Value ?? 0];
         var memoryEnabled = _memoryEnabledCheck.Value == CheckState.Checked;
         var rerankEnabled = _rerankEnabledCheck.Value == CheckState.Checked;
 
         var config = new SharpclawConfig
         {
-            Provider = providerName,
-            Endpoint = _endpointField.Text ?? "",
-            ApiKey = _apiKeyField.Text ?? "",
-            Model = _modelField.Text ?? "",
+            Default = new DefaultAgentConfig
+            {
+                Provider = ProviderNames[_defaultProvider.Value ?? 0],
+                Endpoint = _defaultEndpoint.Text ?? "",
+                ApiKey = _defaultApiKey.Text ?? "",
+                Model = _defaultModel.Text ?? "",
+            },
+            Agents = new AgentsConfig
+            {
+                Main = BuildAgentConfig(_mainPanel),
+                Recaller = BuildAgentConfig(_recallerPanel),
+                Saver = BuildAgentConfig(_saverPanel),
+                Summarizer = BuildAgentConfig(_summarizerPanel),
+            },
             Memory = new MemoryConfig
             {
                 Enabled = memoryEnabled,
@@ -206,4 +268,130 @@ public sealed class ConfigDialog : Dialog
         Saved = true;
         App!.RequestStop();
     }
+
+    #region AgentPanel helpers
+
+    private record AgentPanel(
+        View Container,
+        CheckBox? EnabledCheck,
+        CheckBox UseCustomCheck,
+        OptionSelector Provider,
+        TextField Endpoint,
+        TextField ApiKey,
+        TextField Model,
+        List<View> CustomViews);
+
+    private AgentPanel CreateAgentPanel(string name, bool showEnabled = true)
+    {
+        var container = new View { Width = Dim.Fill(), Height = Dim.Fill() };
+        var y = 1;
+
+        CheckBox? enabledCheck = null;
+        if (showEnabled)
+        {
+            enabledCheck = new CheckBox { Text = $"启用{name}", X = 1, Y = y, Value = CheckState.Checked };
+            container.Add(enabledCheck);
+            y += 2;
+        }
+
+        var useCustomCheck = new CheckBox { Text = "使用独立配置（不勾选则继承默认配置）", X = 1, Y = y };
+        container.Add(useCustomCheck);
+        y += 2;
+
+        var customViews = new List<View>();
+
+        var providerLabel = new Label { Text = "AI 供应商:", X = 1, Y = y };
+        var provider = new OptionSelector
+        {
+            X = 14, Y = y,
+            Labels = ProviderLabels,
+            Orientation = Orientation.Horizontal,
+        };
+        customViews.AddRange([providerLabel, provider]);
+        y += 2;
+
+        var endpointLabel = new Label { Text = "Endpoint:", X = 1, Y = y };
+        var endpoint = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Endpoint };
+        customViews.AddRange([endpointLabel, endpoint]);
+        y += 2;
+
+        var apiKeyLabel = new Label { Text = "API Key:", X = 1, Y = y };
+        var apiKey = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Secret = true };
+        customViews.AddRange([apiKeyLabel, apiKey]);
+        y += 2;
+
+        var modelLabel = new Label { Text = "模型名称:", X = 1, Y = y };
+        var model = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Model };
+        customViews.AddRange([modelLabel, model]);
+
+        // 默认隐藏独立配置字段
+        foreach (var v in customViews)
+        {
+            v.Visible = false;
+            container.Add(v);
+        }
+
+        // 供应商切换时更新默认值
+        provider.ValueChanged += (_, e) =>
+        {
+            var idx = e.NewValue ?? 0;
+            var defaults = Providers[ProviderNames[idx]];
+            endpoint.Text = defaults.Endpoint;
+            model.Text = defaults.Model;
+        };
+
+        // 勾选"使用独立配置"时显示/隐藏字段
+        useCustomCheck.ValueChanged += (_, _) =>
+        {
+            var custom = useCustomCheck.Value == CheckState.Checked;
+            foreach (var v in customViews) v.Visible = custom;
+        };
+
+        return new AgentPanel(container, enabledCheck, useCustomCheck, provider, endpoint, apiKey, model, customViews);
+    }
+
+    private static AgentConfig BuildAgentConfig(AgentPanel panel)
+    {
+        var enabled = panel.EnabledCheck?.Value != CheckState.UnChecked;
+        var useCustom = panel.UseCustomCheck.Value == CheckState.Checked;
+
+        if (!useCustom)
+            return new AgentConfig { Enabled = enabled };
+
+        return new AgentConfig
+        {
+            Enabled = enabled,
+            Provider = ProviderNames[panel.Provider.Value ?? 0],
+            Endpoint = panel.Endpoint.Text ?? "",
+            ApiKey = panel.ApiKey.Text ?? "",
+            Model = panel.Model.Text ?? "",
+        };
+    }
+
+    private static void LoadAgentPanel(AgentPanel panel, AgentConfig agent)
+    {
+        if (panel.EnabledCheck is not null)
+            panel.EnabledCheck.Value = agent.Enabled ? CheckState.Checked : CheckState.UnChecked;
+
+        var hasCustom = agent.Provider is not null || agent.Endpoint is not null
+            || agent.ApiKey is not null || agent.Model is not null;
+
+        panel.UseCustomCheck.Value = hasCustom ? CheckState.Checked : CheckState.UnChecked;
+
+        if (hasCustom)
+        {
+            if (agent.Provider is not null)
+            {
+                var idx = Array.IndexOf(ProviderNames, agent.Provider.ToLowerInvariant());
+                if (idx >= 0) panel.Provider.Value = idx;
+            }
+            if (agent.Endpoint is not null) panel.Endpoint.Text = agent.Endpoint;
+            if (agent.ApiKey is not null) panel.ApiKey.Text = agent.ApiKey;
+            if (agent.Model is not null) panel.Model.Text = agent.Model;
+
+            foreach (var v in panel.CustomViews) v.Visible = true;
+        }
+    }
+
+    #endregion
 }

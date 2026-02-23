@@ -12,6 +12,8 @@ using var app = Application.Create().Init();
 if (args.Contains("config") || !SharpclawConfig.Exists())
 {
     var configDialog = new ConfigDialog();
+    if (SharpclawConfig.Exists())
+        configDialog.LoadFrom(SharpclawConfig.Load());
     app.Run(configDialog);
     configDialog.Dispose();
 
@@ -67,9 +69,6 @@ var commandSkills = new List<Delegate>
 .Select(d => AIFunctionFactory.Create(d))
 .ToArray();
 
-// ── AI 客户端 ──
-var aiClient = ClientFactory.CreateChatClient(config);
-
 // ── 记忆存储 ──
 var memoryStore = ClientFactory.CreateMemoryStore(config);
 if (memoryStore is null)
@@ -77,7 +76,7 @@ if (memoryStore is null)
 
 // ── 创建 ChatWindow 并启动主智能体 ──
 var chatWindow = new ChatWindow();
-var agent = new sharpclaw.Agents.MainAgent(aiClient, memoryStore, commandSkills, chatWindow);
+var agent = new sharpclaw.Agents.MainAgent(config, memoryStore, commandSkills, chatWindow);
 
 // 在后台线程启动智能体循环
 _ = Task.Run(() => agent.RunAsync());

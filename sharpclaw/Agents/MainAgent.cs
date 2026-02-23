@@ -1,6 +1,7 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using sharpclaw.Chat;
+using sharpclaw.Core;
 using sharpclaw.Memory;
 using sharpclaw.UI;
 using System.ComponentModel;
@@ -30,7 +31,7 @@ public class MainAgent
     private AgentSession? _session;
 
     public MainAgent(
-        IChatClient aiClient,
+        SharpclawConfig config,
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
         ChatWindow chatWindow,
@@ -39,17 +40,35 @@ public class MainAgent
         _historyPath = historyPath;
         _chatWindow = chatWindow;
 
+        // 按智能体创建各自的 AI 客户端
+        var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
+
         MemorySaver? memorySaver = null;
         AIFunction[] memoryTools = [];
 
         if (memoryStore is not null)
         {
-            _memoryRecaller = new MemoryRecaller(aiClient, memoryStore);
-            memorySaver = new MemorySaver(aiClient, memoryStore);
+            if (config.Agents.Recaller.Enabled)
+            {
+                var recallerClient = ClientFactory.CreateAgentClient(config, config.Agents.Recaller);
+                _memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
+            }
+
+            if (config.Agents.Saver.Enabled)
+            {
+                var saverClient = ClientFactory.CreateAgentClient(config, config.Agents.Saver);
+                memorySaver = new MemorySaver(saverClient, memoryStore);
+            }
+
             memoryTools = CreateMemoryTools(memoryStore);
         }
 
-        var summarizer = new ConversationSummarizer(aiClient);
+        ConversationSummarizer? summarizer = null;
+        if (config.Agents.Summarizer.Enabled)
+        {
+            var summarizerClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
+            summarizer = new ConversationSummarizer(summarizerClient);
+        }
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
@@ -59,7 +78,7 @@ public class MainAgent
             memorySaver: memorySaver,
             summarizer: summarizer);
 
-        _agent = new ChatClientBuilder(aiClient)
+        _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
             .BuildAIAgent(new ChatClientAgentOptions
             {
