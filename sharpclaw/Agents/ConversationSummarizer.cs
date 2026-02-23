@@ -46,6 +46,7 @@ public class ConversationSummarizer
         if (trimmedMessages.Count == 0 && _currentSummary.Length == 0)
             return null;
 
+        AppLogger.SetStatus("对话总结中...");
         // 提取被裁剪消息的文本
         var trimmedText = new StringBuilder();
         foreach (var msg in trimmedMessages)

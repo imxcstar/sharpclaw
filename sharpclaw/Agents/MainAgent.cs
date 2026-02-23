@@ -113,17 +113,27 @@ public class MainAgent
     private async Task ProcessTurnAsync(string input, CancellationToken cancellationToken)
     {
         _chatWindow.AppendChatLine($"> {input}\n");
-        _chatWindow.DisableInput();
+        _chatWindow.ShowRunning();
+
+        using var aiCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _chatWindow.GetAiCancellationToken());
+        var aiToken = aiCts.Token;
 
         // 记忆回忆
+        AppLogger.SetStatus("记忆回忆中...");
         var inputMessages = new List<ChatMessage>();
         if (_memoryRecaller is not null)
         {
             try
             {
-                var memoryMsg = await _memoryRecaller.RecallAsync(input, cancellationToken: cancellationToken);
+                var memoryMsg = await _memoryRecaller.RecallAsync(input, cancellationToken: aiToken);
                 if (memoryMsg is not null)
                     inputMessages.Add(memoryMsg);
+            }
+            catch (OperationCanceledException)
+            {
+                _chatWindow.AppendChat("\n[已取消]\n");
+                return;
             }
             catch (Exception ex)
             {
@@ -133,27 +143,38 @@ public class MainAgent
         inputMessages.Add(new ChatMessage(ChatRole.User, input));
 
         // 流式输出
+        AppLogger.SetStatus("AI 思考中...");
         _chatWindow.AppendChat("AI: ");
-        await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(cancellationToken))
+        try
         {
-            foreach (var content in update.Contents)
+            await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(aiToken))
             {
-                switch (content)
+                foreach (var content in update.Contents)
                 {
-                    case TextContent text:
-                        _chatWindow.AppendChat(text.Text);
-                        break;
-                    case TextReasoningContent reasoning:
-                        AppLogger.Log($"[Reasoning] {reasoning.Text}");
-                        break;
-                    case FunctionCallContent call:
-                        AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
-                        break;
-                    case FunctionResultContent result:
-                        AppLogger.Log($"[Result({result.CallId})] {JsonSerializer.Serialize(result.Result)}");
-                        break;
+                    switch (content)
+                    {
+                        case TextContent text:
+                            _chatWindow.AppendChat(text.Text);
+                            break;
+                        case TextReasoningContent reasoning:
+                            AppLogger.Log($"[Reasoning] {reasoning.Text}");
+                            break;
+                        case FunctionCallContent call:
+                            AppLogger.SetStatus($"调用工具: {call.Name}");
+                            AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                            break;
+                        case FunctionResultContent result:
+                            AppLogger.Log($"[Result({result.CallId})] {JsonSerializer.Serialize(result.Result)}");
+                            AppLogger.SetStatus("AI 思考中...");
+                            break;
+                    }
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            _chatWindow.AppendChat("\n[已取消]\n");
+            return;
         }
         _chatWindow.AppendChat("\n");
 

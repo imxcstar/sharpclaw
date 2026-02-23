@@ -6,7 +6,7 @@ using Terminal.Gui.Views;
 namespace sharpclaw.UI;
 
 /// <summary>
-/// 主聊天窗口：上方对话区、下方日志区、底部输入框。
+/// 主聊天窗口：上方对话区、下方日志区、底部输入框/运行状态。
 /// </summary>
 public sealed class ChatWindow : Runnable
 {
@@ -14,11 +14,15 @@ public sealed class ChatWindow : Runnable
     private readonly TextView _logView;
     private readonly TextField _inputField;
     private readonly Label _inputLabel;
+    private readonly SpinnerView _spinner;
+    private readonly Label _statusLabel;
 
     private TaskCompletionSource<string>? _inputTcs;
+    private CancellationTokenSource? _aiCts;
 
     public ChatWindow()
     {
+        Application.QuitKey = Key.Q.WithCtrl;
         Title = $"Sharpclaw ({Application.QuitKey} 退出)";
 
         // ── 对话区 ──
@@ -80,13 +84,39 @@ public sealed class ChatWindow : Runnable
         _inputField.Autocomplete.SuggestionGenerator = new SlashCommandSuggestionGenerator(
             ["/exit", "/quit"]);
         _inputField.Autocomplete.SelectionKey = Key.Tab;
-
         _inputField.Accepting += OnInputAccepting;
 
-        Add(chatFrame, logFrame, _inputLabel, _inputField);
+        // ── 运行状态区（默认隐藏）──
+        _spinner = new SpinnerView
+        {
+            X = 0,
+            Y = Pos.AnchorEnd(1),
+            Sequence = ["/", "-", "\\"],
+            Visible = false,
+        };
 
-        // 绑定日志
+        _statusLabel = new Label
+        {
+            Text = " AI 思考中... (Esc 取消)",
+            X = Pos.Right(_spinner),
+            Y = Pos.AnchorEnd(1),
+            Visible = false,
+        };
+
+        Add(chatFrame, logFrame, _inputLabel, _inputField, _spinner, _statusLabel);
+
+        // 绑定日志和状态
         AppLogger.SetLogView(_logView);
+        AppLogger.SetStatusLabel(_statusLabel);
+    }
+
+    /// <summary>
+    /// 获取用于取消当前 AI 运行的 CancellationToken。
+    /// </summary>
+    public CancellationToken GetAiCancellationToken()
+    {
+        _aiCts = new CancellationTokenSource();
+        return _aiCts.Token;
     }
 
     /// <summary>
@@ -99,7 +129,7 @@ public sealed class ChatWindow : Runnable
 
         App!.Invoke(() =>
         {
-            _inputField.Enabled = true;
+            ShowInput();
             _inputField.Text = "";
             _inputField.SetFocus();
         });
@@ -135,14 +165,43 @@ public sealed class ChatWindow : Runnable
     }
 
     /// <summary>
-    /// 禁用输入（AI 回复期间）。
+    /// 切换到运行状态：隐藏输入框，显示 spinner。
     /// </summary>
-    public void DisableInput()
+    public void ShowRunning()
     {
         App!.Invoke(() =>
         {
-            _inputField.Enabled = false;
+            _inputLabel.Visible = false;
+            _inputField.Visible = false;
+            _spinner.Visible = true;
+            _spinner.AutoSpin = true;
+            _statusLabel.Visible = true;
         });
+    }
+
+    /// <summary>
+    /// 切换到输入状态：隐藏 spinner，显示输入框。
+    /// </summary>
+    private void ShowInput()
+    {
+        _spinner.AutoSpin = false;
+        _spinner.Visible = false;
+        _statusLabel.Visible = false;
+        _inputLabel.Visible = true;
+        _inputField.Visible = true;
+        _inputField.Enabled = true;
+    }
+
+    protected override bool OnKeyDown(Key key)
+    {
+        if (key == Key.Esc && _aiCts is { IsCancellationRequested: false })
+        {
+            _aiCts.Cancel();
+            AppLogger.Log("[用户] 已取消 AI 运行");
+            return true;
+        }
+
+        return base.OnKeyDown(key);
     }
 
     private void OnInputAccepting(object? sender, CommandEventArgs e)

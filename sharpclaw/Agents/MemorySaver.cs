@@ -73,6 +73,7 @@ public class MemorySaver
         if (conversationLog.Count == 0 && string.IsNullOrWhiteSpace(userInput))
             return;
 
+        AppLogger.SetStatus("记忆保存中...");
         // 拼接完整对话原文，供正则提取
         var fullText = string.Join("\n", conversationLog) + "\n" + userInput;
 
