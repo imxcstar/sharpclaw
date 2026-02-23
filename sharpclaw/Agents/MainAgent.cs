@@ -92,7 +92,10 @@ public class MainAgent
                     continue;
 
                 if (input is "/exit" or "/quit")
+                {
+                    _chatWindow.App?.Invoke(() => _chatWindow.RequestStop());
                     break;
+                }
 
                 await ProcessTurnAsync(input, cancellationToken);
             }

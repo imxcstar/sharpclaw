@@ -77,6 +77,9 @@ public sealed class ChatWindow : Runnable
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
         };
+        _inputField.Autocomplete.SuggestionGenerator = new SlashCommandSuggestionGenerator(
+            ["/exit", "/quit"]);
+        _inputField.Autocomplete.SelectionKey = Key.Tab;
 
         _inputField.Accepting += OnInputAccepting;
 
