@@ -9,6 +9,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="Anthropic" Version="12.5.0" />
+		<PackageReference Include="Cronos" Version="0.11.1" />
 		<PackageReference Include="GeminiDotnet.Extensions.AI" Version="0.22.0" />
 		<PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.260212.1" />
 		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="*-*" />
