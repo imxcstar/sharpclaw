@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using sharpclaw.UI;
 
 namespace sharpclaw.Core;
 
@@ -23,7 +24,7 @@ public static class KeyStore
 
         key = RandomNumberGenerator.GetBytes(32);
         StoreKey(key);
-        Console.WriteLine("[KeyStore] 已生成并存储加密密钥");
+        AppLogger.Log("[KeyStore] 已生成并存储加密密钥");
         return key;
     }
 

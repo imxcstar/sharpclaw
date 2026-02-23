@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using sharpclaw.UI;
 
 namespace sharpclaw.Core;
 
@@ -142,14 +143,14 @@ public static class ConfigMigrator
         var root = JsonNode.Parse(json)?.AsObject();
         if (root is null) return json;
 
-        Console.WriteLine($"[Config] 检测到旧版本配置 (v{version})，正在迁移到 v{SharpclawConfig.CurrentVersion}...");
+        AppLogger.Log($"[Config] 检测到旧版本配置 (v{version})，正在迁移到 v{SharpclawConfig.CurrentVersion}...");
 
         for (var v = version + 1; v <= SharpclawConfig.CurrentVersion; v++)
         {
             if (Migrations.TryGetValue(v, out var migrate))
             {
                 migrate(root);
-                Console.WriteLine($"[Config] 已完成 v{v - 1} → v{v} 迁移");
+                AppLogger.Log($"[Config] 已完成 v{v - 1} → v{v} 迁移");
             }
         }
 

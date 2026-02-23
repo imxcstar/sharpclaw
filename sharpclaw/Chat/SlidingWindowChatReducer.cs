@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using System.Text;
 
 using sharpclaw.Agents;
+using sharpclaw.UI;
 
 namespace sharpclaw.Chat;
 
@@ -78,7 +79,7 @@ public class SlidingWindowChatReducer : IChatReducer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AutoSave] 记忆保存失败: {ex.Message}");
+                AppLogger.Log($"[AutoSave] 记忆保存失败: {ex.Message}");
             }
         }
 
@@ -145,7 +146,7 @@ public class SlidingWindowChatReducer : IChatReducer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AutoSummary] 总结失败: {ex.Message}");
+                AppLogger.Log($"[AutoSummary] 总结失败: {ex.Message}");
             }
         }
 

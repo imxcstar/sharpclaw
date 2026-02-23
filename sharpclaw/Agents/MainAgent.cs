@@ -2,6 +2,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using sharpclaw.Chat;
 using sharpclaw.Memory;
+using sharpclaw.UI;
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
@@ -9,7 +10,7 @@ using System.Text.Json;
 namespace sharpclaw.Agents;
 
 /// <summary>
-/// 主智能体：集成记忆管线（保存、回忆、总结）和命令工具，提供流式对话能力。
+/// 主智能体：集成记忆管线（保存、回忆、总结）和命令工具，通过 ChatWindow 进行 I/O。
 /// </summary>
 public class MainAgent
 {
@@ -24,23 +25,19 @@ public class MainAgent
 
     private readonly ChatClientAgent _agent;
     private readonly MemoryRecaller? _memoryRecaller;
+    private readonly ChatWindow _chatWindow;
     private readonly string _historyPath;
     private AgentSession? _session;
 
-    /// <summary>
-    /// 创建主智能体。
-    /// </summary>
-    /// <param name="aiClient">AI 聊天客户端</param>
-    /// <param name="memoryStore">记忆存储，为 null 时禁用向量记忆，降级为总结压缩</param>
-    /// <param name="commandSkills">命令工具数组</param>
-    /// <param name="historyPath">会话历史持久化路径</param>
     public MainAgent(
         IChatClient aiClient,
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
+        ChatWindow chatWindow,
         string historyPath = "history.json")
     {
         _historyPath = historyPath;
+        _chatWindow = chatWindow;
 
         MemorySaver? memorySaver = null;
         AIFunction[] memoryTools = [];
@@ -77,7 +74,7 @@ public class MainAgent
     }
 
     /// <summary>
-    /// 启动对话循环。
+    /// 启动对话循环：等待 ChatWindow 输入 → 处理 → 输出。
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -86,28 +83,36 @@ public class MainAgent
                 JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(_historyPath)))
             : await _agent.CreateSessionAsync();
 
-        Console.OutputEncoding = Encoding.UTF8;
-
         while (!cancellationToken.IsCancellationRequested)
         {
-            Console.Write(">");
-            var input = Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(input))
-                continue;
+            try
+            {
+                var input = await _chatWindow.ReadInputAsync(cancellationToken);
+                if (string.IsNullOrEmpty(input))
+                    continue;
 
-            if (input is "/exit" or "/quit")
+                if (input is "/exit" or "/quit")
+                    break;
+
+                await ProcessTurnAsync(input, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
                 break;
-
-            await ProcessTurnAsync(input, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Error] {ex.Message}");
+            }
         }
     }
 
-    /// <summary>
-    /// 处理单轮对话：回忆注入 → 流式输出 → 持久化会话。
-    /// </summary>
     private async Task ProcessTurnAsync(string input, CancellationToken cancellationToken)
     {
-        // 输入消息时触发记忆回忆器
+        _chatWindow.AppendChatLine($"> {input}");
+        _chatWindow.DisableInput();
+
+        // 记忆回忆
         var inputMessages = new List<ChatMessage>();
         if (_memoryRecaller is not null)
         {
@@ -119,13 +124,13 @@ public class MainAgent
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AutoRecall] 回忆失败: {ex.Message}");
+                AppLogger.Log($"[AutoRecall] 回忆失败: {ex.Message}");
             }
         }
         inputMessages.Add(new ChatMessage(ChatRole.User, input));
 
         // 流式输出
-        Console.Write("AI: ");
+        _chatWindow.AppendChat("AI: ");
         await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(cancellationToken))
         {
             foreach (var content in update.Contents)
@@ -133,30 +138,27 @@ public class MainAgent
                 switch (content)
                 {
                     case TextContent text:
-                        Console.Write(text.Text);
+                        _chatWindow.AppendChat(text.Text);
                         break;
                     case TextReasoningContent reasoning:
-                        Console.WriteLine($"\n[Reasoning] {reasoning.Text}");
+                        AppLogger.Log($"[Reasoning] {reasoning.Text}");
                         break;
                     case FunctionCallContent call:
-                        Console.WriteLine($"\n[Function Call({call.CallId})] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                        AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                         break;
                     case FunctionResultContent result:
-                        Console.WriteLine($"\n[Function Result({result.CallId})] {JsonSerializer.Serialize(result.Result)}");
+                        AppLogger.Log($"[Result({result.CallId})] {JsonSerializer.Serialize(result.Result)}");
                         break;
                 }
             }
         }
-        Console.WriteLine();
+        _chatWindow.AppendChatLine("");
 
         // 持久化会话
         var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));
         File.WriteAllText(_historyPath, serialized);
     }
 
-    /// <summary>
-    /// 创建记忆相关的工具函数。
-    /// </summary>
     private static AIFunction[] CreateMemoryTools(IMemoryStore memoryStore)
     {
         [Description("搜索长期记忆库，查找与查询相关的记忆。当用户提到之前讨论过的话题、或你需要回顾历史信息时使用。")]
