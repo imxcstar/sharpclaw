@@ -8,7 +8,7 @@ public class SharpclawConfig
     /// <summary>
     /// 当前配置版本。每次结构变更时递增，用于自动迁移。
     /// </summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -32,9 +32,14 @@ public class SharpclawConfig
     public static SharpclawConfig Load()
     {
         var json = File.ReadAllText(ConfigPath);
-        var migrated = ConfigMigrator.MigrateIfNeeded(json);
+        var oldVersion = ConfigMigrator.ReadVersion(json);
+        var migrated = ConfigMigrator.MigrateIfNeeded(json, oldVersion);
         var config = JsonSerializer.Deserialize<SharpclawConfig>(migrated, JsonOptions)!;
-        config.Save();
+        config.DecryptKeys();
+
+        if (oldVersion != CurrentVersion)
+            config.Save();
+
         return config;
     }
 
@@ -43,8 +48,26 @@ public class SharpclawConfig
         Version = CurrentVersion;
         var dir = Path.GetDirectoryName(ConfigPath)!;
         Directory.CreateDirectory(dir);
+
+        EncryptKeys();
         var json = JsonSerializer.Serialize(this, JsonOptions);
+        DecryptKeys();
+
         File.WriteAllText(ConfigPath, json);
+    }
+
+    private void EncryptKeys()
+    {
+        ApiKey = DataProtector.Encrypt(ApiKey);
+        Memory.EmbeddingApiKey = DataProtector.Encrypt(Memory.EmbeddingApiKey);
+        Memory.RerankApiKey = DataProtector.Encrypt(Memory.RerankApiKey);
+    }
+
+    private void DecryptKeys()
+    {
+        ApiKey = DataProtector.Decrypt(ApiKey);
+        Memory.EmbeddingApiKey = DataProtector.Decrypt(Memory.EmbeddingApiKey);
+        Memory.RerankApiKey = DataProtector.Decrypt(Memory.RerankApiKey);
     }
 }
 
@@ -76,20 +99,48 @@ public static class ConfigMigrator
                 memory["enabled"] = true;
             }
         },
+
+        // v2 → v3: 加密所有明文 API Key
+        [3] = json =>
+        {
+            EncryptField(json, "apiKey");
+            var memory = json["memory"]?.AsObject();
+            if (memory is not null)
+            {
+                EncryptField(memory, "embeddingApiKey");
+                EncryptField(memory, "rerankApiKey");
+            }
+        },
     };
+
+    private static void EncryptField(JsonObject obj, string key)
+    {
+        var value = obj[key]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(value) && !DataProtector.IsEncrypted(value))
+        {
+            obj[key] = DataProtector.Encrypt(value);
+        }
+    }
+
+    /// <summary>
+    /// 从 JSON 中读取版本号，缺失时视为 v1。
+    /// </summary>
+    public static int ReadVersion(string json)
+    {
+        var root = JsonNode.Parse(json)?.AsObject();
+        return root?["version"]?.GetValue<int>() ?? 1;
+    }
 
     /// <summary>
     /// 检测 JSON 中的版本号，按顺序执行所有需要的迁移，返回迁移后的 JSON 字符串。
     /// </summary>
-    public static string MigrateIfNeeded(string json)
+    public static string MigrateIfNeeded(string json, int version)
     {
-        var root = JsonNode.Parse(json)?.AsObject();
-        if (root is null) return json;
-
-        var version = root["version"]?.GetValue<int>() ?? 1;
-
         if (version >= SharpclawConfig.CurrentVersion)
             return json;
+
+        var root = JsonNode.Parse(json)?.AsObject();
+        if (root is null) return json;
 
         Console.WriteLine($"[Config] 检测到旧版本配置 (v{version})，正在迁移到 v{SharpclawConfig.CurrentVersion}...");
 
