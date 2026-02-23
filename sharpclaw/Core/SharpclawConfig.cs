@@ -1,15 +1,22 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace sharpclaw.Core;
 
 public class SharpclawConfig
 {
+    /// <summary>
+    /// 当前配置版本。每次结构变更时递增，用于自动迁移。
+    /// </summary>
+    public const int CurrentVersion = 2;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
+    public int Version { get; set; } = CurrentVersion;
     public string Provider { get; set; } = "anthropic";
     public string Endpoint { get; set; } = "";
     public string ApiKey { get; set; } = "";
@@ -25,11 +32,15 @@ public class SharpclawConfig
     public static SharpclawConfig Load()
     {
         var json = File.ReadAllText(ConfigPath);
-        return JsonSerializer.Deserialize<SharpclawConfig>(json, JsonOptions)!;
+        var migrated = ConfigMigrator.MigrateIfNeeded(json);
+        var config = JsonSerializer.Deserialize<SharpclawConfig>(migrated, JsonOptions)!;
+        config.Save();
+        return config;
     }
 
     public void Save()
     {
+        Version = CurrentVersion;
         var dir = Path.GetDirectoryName(ConfigPath)!;
         Directory.CreateDirectory(dir);
         var json = JsonSerializer.Serialize(this, JsonOptions);
@@ -39,6 +50,7 @@ public class SharpclawConfig
 
 public class MemoryConfig
 {
+    public bool Enabled { get; set; } = true;
     public string EmbeddingEndpoint { get; set; } = "";
     public string EmbeddingApiKey { get; set; } = "";
     public string EmbeddingModel { get; set; } = "";
@@ -46,4 +58,51 @@ public class MemoryConfig
     public string RerankEndpoint { get; set; } = "";
     public string RerankApiKey { get; set; } = "";
     public string RerankModel { get; set; } = "";
+}
+
+/// <summary>
+/// 配置版本迁移器：按版本号顺序执行迁移函数，将旧配置升级到最新版本。
+/// </summary>
+public static class ConfigMigrator
+{
+    private static readonly Dictionary<int, Action<JsonObject>> Migrations = new()
+    {
+        // v1 → v2: 新增 memory.enabled 字段（默认 true，兼容旧配置）
+        [2] = json =>
+        {
+            var memory = json["memory"]?.AsObject();
+            if (memory is not null && !memory.ContainsKey("enabled"))
+            {
+                memory["enabled"] = true;
+            }
+        },
+    };
+
+    /// <summary>
+    /// 检测 JSON 中的版本号，按顺序执行所有需要的迁移，返回迁移后的 JSON 字符串。
+    /// </summary>
+    public static string MigrateIfNeeded(string json)
+    {
+        var root = JsonNode.Parse(json)?.AsObject();
+        if (root is null) return json;
+
+        var version = root["version"]?.GetValue<int>() ?? 1;
+
+        if (version >= SharpclawConfig.CurrentVersion)
+            return json;
+
+        Console.WriteLine($"[Config] 检测到旧版本配置 (v{version})，正在迁移到 v{SharpclawConfig.CurrentVersion}...");
+
+        for (var v = version + 1; v <= SharpclawConfig.CurrentVersion; v++)
+        {
+            if (Migrations.TryGetValue(v, out var migrate))
+            {
+                migrate(root);
+                Console.WriteLine($"[Config] 已完成 v{v - 1} → v{v} 迁移");
+            }
+        }
+
+        root["version"] = SharpclawConfig.CurrentVersion;
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
 }

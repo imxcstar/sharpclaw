@@ -63,8 +63,11 @@ public static class ClientFactory
             new HttpClient(), mem.RerankApiKey, mem.RerankModel, endpoint);
     }
 
-    public static VectorMemoryStore CreateMemoryStore(SharpclawConfig config)
+    public static VectorMemoryStore? CreateMemoryStore(SharpclawConfig config)
     {
+        if (!config.Memory.Enabled)
+            return null;
+
         return new VectorMemoryStore(
             CreateEmbeddingGenerator(config),
             filePath: "memories.json",

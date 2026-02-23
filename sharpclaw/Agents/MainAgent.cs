@@ -23,7 +23,7 @@ public class MainAgent
         """;
 
     private readonly ChatClientAgent _agent;
-    private readonly MemoryRecaller _memoryRecaller;
+    private readonly MemoryRecaller? _memoryRecaller;
     private readonly string _historyPath;
     private AgentSession? _session;
 
@@ -31,23 +31,28 @@ public class MainAgent
     /// 创建主智能体。
     /// </summary>
     /// <param name="aiClient">AI 聊天客户端</param>
-    /// <param name="memoryStore">记忆存储</param>
+    /// <param name="memoryStore">记忆存储，为 null 时禁用向量记忆，降级为总结压缩</param>
     /// <param name="commandSkills">命令工具数组</param>
     /// <param name="historyPath">会话历史持久化路径</param>
     public MainAgent(
         IChatClient aiClient,
-        IMemoryStore memoryStore,
+        IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
         string historyPath = "history.json")
     {
         _historyPath = historyPath;
-        _memoryRecaller = new MemoryRecaller(aiClient, memoryStore);
 
-        var memorySaver = new MemorySaver(aiClient, memoryStore);
+        MemorySaver? memorySaver = null;
+        AIFunction[] memoryTools = [];
+
+        if (memoryStore is not null)
+        {
+            _memoryRecaller = new MemoryRecaller(aiClient, memoryStore);
+            memorySaver = new MemorySaver(aiClient, memoryStore);
+            memoryTools = CreateMemoryTools(memoryStore);
+        }
+
         var summarizer = new ConversationSummarizer(aiClient);
-
-        // 记忆工具：供主智能体主动搜索/浏览记忆
-        var memoryTools = CreateMemoryTools(memoryStore);
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
@@ -104,15 +109,18 @@ public class MainAgent
     {
         // 输入消息时触发记忆回忆器
         var inputMessages = new List<ChatMessage>();
-        try
+        if (_memoryRecaller is not null)
         {
-            var memoryMsg = await _memoryRecaller.RecallAsync(input, cancellationToken: cancellationToken);
-            if (memoryMsg is not null)
-                inputMessages.Add(memoryMsg);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[AutoRecall] 回忆失败: {ex.Message}");
+            try
+            {
+                var memoryMsg = await _memoryRecaller.RecallAsync(input, cancellationToken: cancellationToken);
+                if (memoryMsg is not null)
+                    inputMessages.Add(memoryMsg);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AutoRecall] 回忆失败: {ex.Message}");
+            }
         }
         inputMessages.Add(new ChatMessage(ChatRole.User, input));
 

@@ -65,6 +65,8 @@ var aiClient = ClientFactory.CreateChatClient(config);
 
 // ── 记忆存储 ──
 var memoryStore = ClientFactory.CreateMemoryStore(config);
+if (memoryStore is null)
+    Console.WriteLine("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");
 
 // ── 启动主智能体 ──
 var agent = new MainAgent(aiClient, memoryStore, commandSkills);

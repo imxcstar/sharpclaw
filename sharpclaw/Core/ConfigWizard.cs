@@ -40,28 +40,39 @@ public static class ConfigWizard
         var apiKey = ReadLine("API Key", "");
         var model = ReadLine("模型名称", defaults.Model);
 
-        // 5-7. Embedding 配置
+        // 5. 是否启用向量记忆
         Console.WriteLine();
         Console.WriteLine("=== 记忆功能配置 ===");
-        var embeddingEndpoint = ReadLine("Embedding Endpoint",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1");
-        var embeddingApiKey = ReadLine("Embedding API Key", "");
-        var embeddingModel = ReadLine("Embedding 模型", "text-embedding-v4");
+        Console.WriteLine("向量记忆使用 Embedding 模型实现语义搜索，需要额外配置。");
+        Console.WriteLine("禁用后记忆压缩将降级为总结压缩（仅保留对话摘要）。");
+        var memoryEnabled = ReadYesNo("启用向量记忆?", true);
 
-        // 8. 是否启用重排序
-        var rerankEnabled = ReadYesNo("启用重排序?", true);
-
+        string embeddingEndpoint = "", embeddingApiKey = "", embeddingModel = "";
+        var rerankEnabled = false;
         string rerankEndpoint = "", rerankApiKey = "", rerankModel = "";
-        if (rerankEnabled)
+
+        if (memoryEnabled)
         {
-            // 9. 重排序配置
-            rerankEndpoint = ReadLine("Rerank Endpoint",
-                "https://dashscope.aliyuncs.com/compatible-api/v1/reranks");
-            rerankApiKey = ReadLine("Rerank API Key", embeddingApiKey, "同 Embedding API Key");
-            rerankModel = ReadLine("Rerank 模型", "qwen3-vl-rerank");
+            // 6-8. Embedding 配置
+            embeddingEndpoint = ReadLine("Embedding Endpoint",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1");
+            embeddingApiKey = ReadLine("Embedding API Key", "");
+            embeddingModel = ReadLine("Embedding 模型", "text-embedding-v4");
+
+            // 9. 是否启用重排序
+            rerankEnabled = ReadYesNo("启用重排序?", true);
+
+            if (rerankEnabled)
+            {
+                // 10. 重排序配置
+                rerankEndpoint = ReadLine("Rerank Endpoint",
+                    "https://dashscope.aliyuncs.com/compatible-api/v1/reranks");
+                rerankApiKey = ReadLine("Rerank API Key", embeddingApiKey, "同 Embedding API Key");
+                rerankModel = ReadLine("Rerank 模型", "qwen3-vl-rerank");
+            }
         }
 
-        // 10. 保存
+        // 11. 保存
         var config = new SharpclawConfig
         {
             Provider = providerName,
@@ -70,6 +81,7 @@ public static class ConfigWizard
             Model = model,
             Memory = new MemoryConfig
             {
+                Enabled = memoryEnabled,
                 EmbeddingEndpoint = embeddingEndpoint,
                 EmbeddingApiKey = embeddingApiKey,
                 EmbeddingModel = embeddingModel,
