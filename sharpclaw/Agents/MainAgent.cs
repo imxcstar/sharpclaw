@@ -109,7 +109,7 @@ public class MainAgent
 
     private async Task ProcessTurnAsync(string input, CancellationToken cancellationToken)
     {
-        _chatWindow.AppendChatLine($"> {input}");
+        _chatWindow.AppendChatLine($"> {input}\n");
         _chatWindow.DisableInput();
 
         // 记忆回忆
@@ -152,7 +152,7 @@ public class MainAgent
                 }
             }
         }
-        _chatWindow.AppendChatLine("");
+        _chatWindow.AppendChat("\n");
 
         // 持久化会话
         var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));

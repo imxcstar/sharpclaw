@@ -1,4 +1,3 @@
-using Terminal.Gui.App;
 using Terminal.Gui.Views;
 
 namespace sharpclaw.UI;
@@ -15,24 +14,15 @@ public static class AppLogger
 
     public static void Log(string message)
     {
-        if (_logView is null) return;
+        if (_logView?.App is not { } app) return;
 
-        Application.Invoke(() =>
+        app.Invoke(() =>
         {
             var text = _logView.Text;
             _logView.Text = string.IsNullOrEmpty(text)
                 ? message
                 : text + "\n" + message;
-            ScrollToEnd(_logView);
+            _logView.MoveEnd();
         });
-    }
-
-    private static void ScrollToEnd(TextView view)
-    {
-        var lines = view.Text?.Split('\n').Length ?? 0;
-        if (lines > 0)
-        {
-            view.MoveEnd();
-        }
     }
 }

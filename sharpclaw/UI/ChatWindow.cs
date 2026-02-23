@@ -94,7 +94,7 @@ public sealed class ChatWindow : Runnable
         _inputTcs = new TaskCompletionSource<string>();
         cancellationToken.Register(() => _inputTcs.TrySetCanceled());
 
-        Application.Invoke(() =>
+        App!.Invoke(() =>
         {
             _inputField.Enabled = true;
             _inputField.Text = "";
@@ -109,7 +109,7 @@ public sealed class ChatWindow : Runnable
     /// </summary>
     public void AppendChat(string text)
     {
-        Application.Invoke(() =>
+        App!.Invoke(() =>
         {
             _chatView.Text += text;
             _chatView.MoveEnd();
@@ -121,7 +121,7 @@ public sealed class ChatWindow : Runnable
     /// </summary>
     public void AppendChatLine(string text)
     {
-        Application.Invoke(() =>
+        App!.Invoke(() =>
         {
             var current = _chatView.Text;
             _chatView.Text = string.IsNullOrEmpty(current)
@@ -136,7 +136,7 @@ public sealed class ChatWindow : Runnable
     /// </summary>
     public void DisableInput()
     {
-        Application.Invoke(() =>
+        App!.Invoke(() =>
         {
             _inputField.Enabled = false;
         });
