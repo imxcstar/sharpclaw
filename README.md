@@ -1,47 +1,65 @@
 # Sharpclaw
 
-基于 .NET 10 的 AI 智能体，具备长期记忆能力和系统操作工具。支持 Anthropic Claude、OpenAI、Gemini 多供应商切换，阿里云 DashScope 提供向量嵌入和重排序。
+[中文版](README_CN.md)
 
-## 特性
+A .NET 10 AI agent with long-term memory and system operation tools. Supports Anthropic Claude, OpenAI, and Gemini multi-provider switching, with Alibaba Cloud DashScope for vector embedding and reranking.
 
-- **多供应商支持** — Anthropic / OpenAI / Gemini，通过配置文件切换，无需改代码
-- **长期记忆** — 自动保存、检索、注入对话中的重要信息，跨会话持久化
-- **记忆管线** — 四个独立子智能体协作：主动记忆保存、记忆回忆注入、滑动窗口裁剪、对话摘要
-- **向量语义搜索** — 两阶段检索：向量嵌入召回 + 可选重排序
-- **语义去重** — 余弦相似度超过阈值时自动合并记忆，避免冗余
-- **系统工具** — 文件操作、进程执行（dotnet/node/docker）、HTTP 请求、后台任务管理
+![Main Chat Window](preview/main.png)
 
-## 环境要求
+## Features
+
+- **Multi-provider support** — Anthropic / OpenAI / Gemini, switch via config without code changes
+- **Per-agent configuration** — Each agent (main, memory recall, memory save, summarizer) can use different API endpoints, keys, and models
+- **Long-term memory** — Automatically saves, retrieves, and injects important information from conversations, persisted across sessions
+- **Memory pipeline** — Four independent sub-agents collaborate: proactive memory saving, memory recall injection, sliding window trimming, conversation summarization
+- **Vector semantic search** — Two-phase retrieval: vector embedding recall + optional reranking
+- **Semantic deduplication** — Automatically merges memories when cosine similarity exceeds threshold, avoiding redundancy
+- **System tools** — File operations, process execution (dotnet/node/docker), HTTP requests, background task management
+- **TUI interface** — Terminal.Gui v2 based interface with separate chat, log, and input areas
+
+## Requirements
 
 - .NET 10 SDK
 
-## 快速开始
+## Quick Start
 
 ```bash
 dotnet run --project sharpclaw
 ```
 
-首次运行会自动进入配置引导，按提示选择 AI 供应商、填写 API Key 等信息。配置保存到 `~/.sharpclaw/config.json`。
+First run automatically launches the configuration wizard. Select your AI provider, enter API keys, and configure per-agent settings.
 
-之后启动直接进入交互式对话，输入 `/exit` 或 `/quit` 退出。
+![Config Dialog](preview/config.png)
 
-## 配置
+Config is saved to `~/.sharpclaw/config.json`. After that, launching goes straight to interactive chat. Type `/exit` or `/quit` to exit, `Ctrl+Q` to quit.
 
-运行配置引导：
+## Configuration
+
+Run the config wizard:
 
 ```bash
 dotnet run --project sharpclaw config
 ```
 
-配置文件结构（`~/.sharpclaw/config.json`）：
+Config file structure (`~/.sharpclaw/config.json`):
 
 ```json
 {
-  "provider": "anthropic",
-  "endpoint": "https://api.anthropic.com",
-  "apiKey": "sk-xxx",
-  "model": "claude-opus-4-6",
+  "version": 4,
+  "default": {
+    "provider": "anthropic",
+    "endpoint": "https://api.anthropic.com",
+    "apiKey": "sk-xxx",
+    "model": "claude-opus-4-6"
+  },
+  "agents": {
+    "main": {},
+    "recaller": { "enabled": true },
+    "saver": { "enabled": true, "model": "claude-haiku-4-5-20251001" },
+    "summarizer": { "enabled": true, "model": "claude-haiku-4-5-20251001" }
+  },
   "memory": {
+    "enabled": true,
     "embeddingEndpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "embeddingApiKey": "sk-xxx",
     "embeddingModel": "text-embedding-v4",
@@ -53,26 +71,28 @@ dotnet run --project sharpclaw config
 }
 ```
 
-## 记忆管线
+Each agent inherits from `default` unless overridden. Set `"enabled": false` to disable a sub-agent.
 
-每轮对话的处理流程：
+## Memory Pipeline
+
+Processing flow per conversation turn:
 
 ```
-用户输入
-  │
-  ├─ MemoryRecaller    回忆注入：检索相关记忆，注入到上下文
-  │
-  ├─ Agent 响应        主智能体处理（可调用 SearchMemory/GetRecentMemories 工具）
-  │
-  └─ SlidingWindowChatReducer (AfterMessageAdded)
-       ├─ MemorySaver            主动记忆：分析对话，保存/更新/删除记忆
-       ├─ 剥离旧注入消息
-       ├─ 滑动窗口裁剪           超出 windowSize + buffer 时触发
-       └─ ConversationSummarizer 总结被裁剪的对话，注入摘要
+User Input
+  |
+  +- MemoryRecaller    Recall: retrieve relevant memories, inject into context
+  |
+  +- Agent Response    Main agent processes (can call SearchMemory/GetRecentMemories tools)
+  |
+  +- SlidingWindowChatReducer (AfterMessageAdded)
+       +- MemorySaver            Proactive save: analyze conversation, save/update/delete memories
+       +- Strip old injected messages
+       +- Sliding window trim    Triggered when exceeding windowSize + buffer
+       +- ConversationSummarizer Summarize trimmed conversation, inject summary
 ```
 
-## 数据持久化
+## Data Persistence
 
-- `~/.sharpclaw/config.json` — 供应商配置
-- `history.json` — 会话状态，启动时自动恢复
-- `memories.json` — 向量记忆库
+- `~/.sharpclaw/config.json` — Provider and agent configuration
+- `history.json` — Session state, auto-restored on startup
+- `memories.json` — Vector memory store
