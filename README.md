@@ -1,4 +1,4 @@
-# Sharpclaw
+﻿# Sharpclaw
 
 [中文版](README_CN.md)
 
@@ -16,6 +16,7 @@ A .NET 10 AI agent with long-term memory and system operation tools. Supports An
 - **Semantic deduplication** — Automatically merges memories when cosine similarity exceeds threshold, avoiding redundancy
 - **System tools** — File operations, process execution (dotnet/node/docker), HTTP requests, background task management
 - **TUI interface** — Terminal.Gui v2 based interface with separate chat, log, and input areas
+- **Config data encryption** — Sensitive data like API keys are encrypted with AES-256-CBC, with encryption keys stored in the OS credential manager (Windows Credential Manager / macOS Keychain / Linux libsecret)
 
 ## Requirements
 

@@ -1,5 +1,6 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using sharpclaw.Abstractions;
 using sharpclaw.Chat;
 using sharpclaw.Core;
 using sharpclaw.Memory;
@@ -26,7 +27,7 @@ public class MainAgent
 
     private readonly ChatClientAgent _agent;
     private readonly MemoryRecaller? _memoryRecaller;
-    private readonly ChatWindow _chatWindow;
+    private readonly IChatIO _chatIO;
     private readonly string _historyPath;
     private AgentSession? _session;
 
@@ -34,11 +35,11 @@ public class MainAgent
         SharpclawConfig config,
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
-        ChatWindow chatWindow,
+        IChatIO chatIO,
         string historyPath = "history.json")
     {
         _historyPath = historyPath;
-        _chatWindow = chatWindow;
+        _chatIO = chatIO;
 
         // 按智能体创建各自的 AI 客户端
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
@@ -97,7 +98,7 @@ public class MainAgent
     /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        await _chatWindow.WaitForReadyAsync();
+        await _chatIO.WaitForReadyAsync();
 
         _session = File.Exists(_historyPath)
             ? await _agent.DeserializeSessionAsync(
@@ -108,13 +109,13 @@ public class MainAgent
         {
             try
             {
-                var input = await _chatWindow.ReadInputAsync(cancellationToken);
+                var input = await _chatIO.ReadInputAsync(cancellationToken);
                 if (string.IsNullOrEmpty(input))
                     continue;
 
                 if (input is "/exit" or "/quit")
                 {
-                    _chatWindow.App?.Invoke(() => _chatWindow.RequestStop());
+                    _chatIO.RequestStop();
                     break;
                 }
 
@@ -133,11 +134,11 @@ public class MainAgent
 
     private async Task ProcessTurnAsync(string input, CancellationToken cancellationToken)
     {
-        _chatWindow.AppendChatLine($"> {input}\n");
-        _chatWindow.ShowRunning();
+        _chatIO.AppendChatLine($"> {input}\n");
+        _chatIO.ShowRunning();
 
         using var aiCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, _chatWindow.GetAiCancellationToken());
+            cancellationToken, _chatIO.GetAiCancellationToken());
         var aiToken = aiCts.Token;
 
         // 记忆回忆
@@ -153,7 +154,7 @@ public class MainAgent
             }
             catch (OperationCanceledException)
             {
-                _chatWindow.AppendChat("\n[已取消]\n");
+                _chatIO.AppendChat("\n[已取消]\n");
                 return;
             }
             catch (Exception ex)
@@ -165,7 +166,7 @@ public class MainAgent
 
         // 流式输出
         AppLogger.SetStatus("AI 思考中...");
-        _chatWindow.AppendChat("AI: ");
+        _chatIO.AppendChat("AI: ");
         try
         {
             await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(aiToken))
@@ -175,7 +176,7 @@ public class MainAgent
                     switch (content)
                     {
                         case TextContent text:
-                            _chatWindow.AppendChat(text.Text);
+                            _chatIO.AppendChat(text.Text);
                             break;
                         case TextReasoningContent reasoning:
                             AppLogger.Log($"[Reasoning] {reasoning.Text}");
@@ -194,10 +195,10 @@ public class MainAgent
         }
         catch (OperationCanceledException)
         {
-            _chatWindow.AppendChat("\n[已取消]\n");
+            _chatIO.AppendChat("\n[已取消]\n");
             return;
         }
-        _chatWindow.AppendChat("\n");
+        _chatIO.AppendChat("\n");
 
         // 持久化会话
         var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));

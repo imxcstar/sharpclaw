@@ -1,4 +1,4 @@
-# Sharpclaw
+﻿# Sharpclaw
 
 [English](README.md)
 
@@ -16,6 +16,7 @@
 - **语义去重** — 余弦相似度超过阈值时自动合并记忆，避免冗余
 - **系统工具** — 文件操作、进程执行（dotnet/node/docker）、HTTP 请求、后台任务管理
 - **TUI 界面** — 基于 Terminal.Gui v2 的终端界面，对话区、日志区、输入区分离
+- **配置数据加密** — API Key 等敏感信息使用 AES-256-CBC 加密存储，密钥托管于操作系统凭据管理器（Windows Credential Manager / macOS Keychain / Linux libsecret）
 
 ## 环境要求
 

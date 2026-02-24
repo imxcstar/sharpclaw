@@ -76,7 +76,7 @@ if (memoryStore is null)
 
 // ── 创建 ChatWindow 并启动主智能体 ──
 var chatWindow = new ChatWindow();
-var agent = new sharpclaw.Agents.MainAgent(config, memoryStore, commandSkills, chatWindow);
+var agent = new sharpclaw.Agents.MainAgent(config, memoryStore, commandSkills, chatIO: chatWindow);
 
 // 在后台线程启动智能体循环
 _ = Task.Run(() => agent.RunAsync());

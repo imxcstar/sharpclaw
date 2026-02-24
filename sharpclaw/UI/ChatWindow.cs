@@ -1,3 +1,4 @@
+using sharpclaw.Abstractions;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -8,7 +9,7 @@ namespace sharpclaw.UI;
 /// <summary>
 /// 主聊天窗口：上方对话区、下方日志区、底部输入框/运行状态。
 /// </summary>
-public sealed class ChatWindow : Runnable
+public sealed class ChatWindow : Runnable, IChatIO
 {
     private readonly TextView _chatView;
     private readonly TextView _logView;
@@ -20,11 +21,6 @@ public sealed class ChatWindow : Runnable
     private TaskCompletionSource<string>? _inputTcs;
     private CancellationTokenSource? _aiCts;
     private readonly TaskCompletionSource _readyTcs = new();
-
-    // 文本缓冲：降低 TextView 更新频率，避免 WordWrap 索引越界
-    private readonly object _chatBufferLock = new();
-    private string _chatBuffer = "";
-    private bool _chatFlushScheduled;
 
     /// <summary>
     /// 等待窗口就绪（App 已绑定）。
@@ -118,9 +114,8 @@ public sealed class ChatWindow : Runnable
 
         Add(chatFrame, logFrame, _inputLabel, _inputField, _spinner, _statusLabel);
 
-        // 绑定日志和状态
-        AppLogger.SetLogView(_logView);
-        AppLogger.SetStatusLabel(_statusLabel);
+        // 初始化 TerminalGuiLogger 并绑定到全局 AppLogger
+        AppLogger.SetInstance(new TerminalGuiLogger(_logView, _statusLabel));
 
         Initialized += (_, _) => _readyTcs.TrySetResult();
     }
@@ -153,62 +148,33 @@ public sealed class ChatWindow : Runnable
     }
 
     /// <summary>
-    /// 追加对话文本（流式输出用）。缓冲后批量刷新。
+    /// 追加对话文本（流式输出用）。
     /// </summary>
     public void AppendChat(string text)
     {
-        ScheduleFlush(text);
+        if (App is not { } app) return;
+
+        app.Invoke(() =>
+        {
+            _chatView.Text += text.Replace('\t', ' ');
+            _chatView.MoveEnd();
+        });
     }
 
     /// <summary>
-    /// 追加一行对话文本。缓冲后批量刷新。
+    /// 追加一行对话文本。
     /// </summary>
     public void AppendChatLine(string text)
     {
-        lock (_chatBufferLock)
+        if (App is not { } app) return;
+
+        app.Invoke(() =>
         {
-            _chatBuffer = string.IsNullOrEmpty(_chatBuffer)
-                ? text
-                : _chatBuffer + "\n" + text;
-        }
-
-        ScheduleFlush(null);
-    }
-
-    private void ScheduleFlush(string? text)
-    {
-        lock (_chatBufferLock)
-        {
-            if (text is not null)
-                _chatBuffer += text;
-
-            if (_chatFlushScheduled) return;
-            _chatFlushScheduled = true;
-        }
-
-        Task.Delay(100).ContinueWith(_ => FlushChatBuffer());
-    }
-
-    private void FlushChatBuffer()
-    {
-        string pending;
-        lock (_chatBufferLock)
-        {
-            pending = _chatBuffer;
-            _chatBuffer = "";
-            _chatFlushScheduled = false;
-        }
-
-        if (string.IsNullOrEmpty(pending)) return;
-
-        App?.Invoke(() =>
-        {
-            try
-            {
-                _chatView.Text += pending;
-                _chatView.MoveEnd();
-            }
-            catch (ArgumentOutOfRangeException) { }
+            var current = _chatView.Text;
+            _chatView.Text = string.IsNullOrEmpty(current)
+                ? text.Replace('\t', ' ')
+                : current + "\n" + text.Replace('\t', ' ');
+            _chatView.MoveEnd();
         });
     }
 
@@ -238,6 +204,14 @@ public sealed class ChatWindow : Runnable
         _inputLabel.Visible = true;
         _inputField.Visible = true;
         _inputField.Enabled = true;
+    }
+
+    /// <summary>
+    /// IChatIO.RequestStop：线程安全地请求停止应用。
+    /// </summary>
+    void IChatIO.RequestStop()
+    {
+        App?.Invoke(() => base.RequestStop());
     }
 
     protected override bool OnKeyDown(Key key)
