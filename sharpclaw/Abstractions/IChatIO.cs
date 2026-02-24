@@ -32,4 +32,7 @@ public interface IChatIO
 
     /// <summary>请求停止整个应用。</summary>
     void RequestStop();
+
+    /// <summary>请求显示配置界面。返回 true 表示配置已保存。</summary>
+    Task<bool> ShowConfigAsync() => Task.FromResult(false);
 }

@@ -119,6 +119,14 @@ public class MainAgent
                     break;
                 }
 
+                if (input is "/config")
+                {
+                    var saved = await _chatIO.ShowConfigAsync();
+                    if (saved)
+                        _chatIO.AppendChatLine("配置已保存，重启后生效。\n");
+                    continue;
+                }
+
                 await ProcessTurnAsync(input, cancellationToken);
             }
             catch (OperationCanceledException)

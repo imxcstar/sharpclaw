@@ -1,5 +1,6 @@
 using sharpclaw.UI;
 using sharpclaw.Abstractions;
+using sharpclaw.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -92,7 +93,7 @@ public sealed class ChatWindow : Runnable, IChatIO
             Width = Dim.Fill(),
         };
         _inputField.Autocomplete.SuggestionGenerator = new SlashCommandSuggestionGenerator(
-            ["/exit", "/quit"]);
+            ["/exit", "/quit", "/config"]);
         _inputField.Autocomplete.SelectionKey = Key.Tab;
         _inputField.Accepting += OnInputAccepting;
 
@@ -223,6 +224,25 @@ public sealed class ChatWindow : Runnable, IChatIO
     void IChatIO.RequestStop()
     {
         App?.Invoke(() => base.RequestStop());
+    }
+
+    /// <summary>
+    /// 在 TUI 中弹出配置对话框，完成后返回聊天界面。
+    /// </summary>
+    public Task<bool> ShowConfigAsync()
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        App!.Invoke(() =>
+        {
+            var configDialog = new ConfigDialog();
+            if (SharpclawConfig.Exists())
+                configDialog.LoadFrom(SharpclawConfig.Load());
+            App!.Run(configDialog);
+            var saved = configDialog.Saved;
+            configDialog.Dispose();
+            tcs.SetResult(saved);
+        });
+        return tcs.Task;
     }
 
     protected override bool OnKeyDown(Key key)
