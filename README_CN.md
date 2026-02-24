@@ -47,6 +47,8 @@ dotnet run --project sharpclaw serve --port 8080
 
 启动后访问 `http://localhost:5000`（默认端口）打开 Web 聊天界面。Web UI 支持 Markdown 渲染、代码高亮、连接状态指示和实时状态显示。
 
+![Web 聊天界面](preview/web.png)
+
 > 注意：Web 模式需要先通过 TUI 模式完成配置。同一时间仅支持单客户端连接。
 
 ## 配置

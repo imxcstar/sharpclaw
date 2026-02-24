@@ -47,6 +47,8 @@ dotnet run --project sharpclaw serve --port 8080
 
 Visit `http://localhost:5000` (default port) to open the web chat interface. The Web UI supports Markdown rendering, code highlighting, connection status indicators, and real-time status display.
 
+![Web Chat Interface](preview/web.png)
+
 > Note: Web mode requires completing configuration via TUI mode first. Only one client connection is supported at a time.
 
 ## Configuration
