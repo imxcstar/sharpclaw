@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharpclaw</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+    --bg: #1a1b26; --surface: #24283b; --border: #3b4261;
+    --text: #c0caf5; --text-dim: #565f89; --accent: #7aa2f7;
+    --green: #9ece6a; --red: #f7768e; --yellow: #e0af68;
+}
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+/* 顶栏 */
+.header { padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.header h1 { font-size: 16px; font-weight: 600; }
+.conn-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+.conn-status.connected { background: #9ece6a33; color: var(--green); }
+.conn-status.disconnected { background: #f7768e33; color: var(--red); }
+.status-text { font-size: 12px; color: var(--yellow); margin-left: auto; }
+.status-text::before { content: ''; }
+.status-text:not(:empty)::before { content: '⟳ '; display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* 主体 */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 对话区 */
+.chat-area { flex: 1; overflow-y: auto; padding: 16px; }
+.chat-area::-webkit-scrollbar { width: 6px; }
+.chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.message { margin-bottom: 16px; line-height: 1.6; }
+.message.user { color: var(--accent); }
+.message.user::before { content: '> '; }
+.message.ai .content { }
+.message.ai .content p { margin-bottom: 8px; }
+.message.ai .content pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; margin-bottom: 8px; }
+.message.ai .content code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
+.message.ai .content p code { background: var(--surface); padding: 1px 5px; border-radius: 3px; }
+.message.ai .content ul, .message.ai .content ol { padding-left: 20px; margin-bottom: 8px; }
+.message.ai .content table { border-collapse: collapse; margin-bottom: 8px; }
+.message.ai .content th, .message.ai .content td { border: 1px solid var(--border); padding: 6px 10px; }
+.message.cancelled { color: var(--text-dim); font-style: italic; }
+
+/* 输入区 */
+.input-area { padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
+.input-row { display: flex; gap: 8px; }
+.input-row input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 14px; outline: none; }
+.input-row input:focus { border-color: var(--accent); }
+.input-row input:disabled { opacity: 0.5; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; }
+.btn-send { background: var(--accent); color: var(--bg); }
+.btn-send:hover { opacity: 0.9; }
+.btn-send:disabled { opacity: 0.4; cursor: default; }
+.btn-cancel { background: var(--red); color: #fff; display: none; }
+.btn-cancel:hover { opacity: 0.9; }
+.running-status { display: none; padding: 6px 0; font-size: 13px; color: var(--yellow); }
+.running-status .spinner { display: inline-block; animation: spin 1s linear infinite; margin-right: 6px; }
+.running-status.active { display: flex; align-items: center; }
+
+/* 日志区 */
+.log-toggle { padding: 4px 16px; background: var(--surface); border-top: 1px solid var(--border); cursor: pointer; font-size: 12px; color: var(--text-dim); flex-shrink: 0; user-select: none; }
+.log-toggle:hover { color: var(--text); }
+.log-area { max-height: 0; overflow-y: auto; background: #1a1b26; transition: max-height 0.2s; flex-shrink: 0; }
+.log-area.open { max-height: 200px; border-top: 1px solid var(--border); }
+.log-area::-webkit-scrollbar { width: 6px; }
+.log-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.log-content { padding: 8px 16px; font-family: monospace; font-size: 12px; color: var(--text-dim); white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Sharpclaw</h1>
+    <span id="connStatus" class="conn-status disconnected">未连接</span>
+    <span id="statusText" class="status-text"></span>
+</div>
+
+<div class="main">
+    <div id="chatArea" class="chat-area"></div>
+</div>
+
+<div class="input-area">
+    <div class="input-row">
+        <input id="inputField" type="text" placeholder="输入消息..." autofocus>
+        <button id="btnSend" class="btn btn-send">发送</button>
+        <button id="btnCancel" class="btn btn-cancel">取消</button>
+    </div>
+    <div id="runningStatus" class="running-status">
+        <span class="spinner">⟳</span>
+        <span id="runningText">AI 思考中...</span>
+    </div>
+</div>
+
+<div id="logToggle" class="log-toggle">▶ 日志</div>
+<div id="logArea" class="log-area">
+    <div id="logContent" class="log-content"></div>
+</div>
+
+<script>
+const chatArea = document.getElementById('chatArea');
+const inputField = document.getElementById('inputField');
+const btnSend = document.getElementById('btnSend');
+const btnCancel = document.getElementById('btnCancel');
+const connStatus = document.getElementById('connStatus');
+const statusText = document.getElementById('statusText');
+const logToggle = document.getElementById('logToggle');
+const logArea = document.getElementById('logArea');
+const logContent = document.getElementById('logContent');
+const runningStatus = document.getElementById('runningStatus');
+const runningText = document.getElementById('runningText');
+
+let ws = null;
+let currentAiMsg = null; // 当前正在流式输出的 AI 消息元素
+let currentAiText = '';  // 当前 AI 消息的原始文本
+
+// marked 配置
+marked.setOptions({ breaks: true, gfm: true });
+
+function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+    ws.onopen = () => {
+        connStatus.textContent = '已连接';
+        connStatus.className = 'conn-status connected';
+    };
+
+    ws.onclose = () => {
+        connStatus.textContent = '未连接';
+        connStatus.className = 'conn-status disconnected';
+        statusText.textContent = '';
+        setInputState(false);
+        // 3 秒后重连
+        setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => {};
+
+    ws.onmessage = (e) => {
+        try {
+            const msg = JSON.parse(e.data);
+            handleMessage(msg);
+        } catch {}
+    };
+}
+
+function handleMessage(msg) {
+    switch (msg.type) {
+        case 'chat':
+            if (!currentAiMsg) startAiMessage();
+            currentAiText += msg.text;
+            renderCurrentAi();
+            scrollToBottom();
+            break;
+
+        case 'chatLine':
+            // 完整一行（如用户输入回显）
+            const div = document.createElement('div');
+            div.className = 'message user';
+            div.textContent = msg.text.replace(/^> /, '').replace(/\n$/, '');
+            chatArea.appendChild(div);
+            scrollToBottom();
+            break;
+
+        case 'state':
+            if (msg.state === 'running') {
+                setInputState(false);
+                currentAiMsg = null;
+                currentAiText = '';
+            } else if (msg.state === 'input') {
+                // 结束当前 AI 消息
+                currentAiMsg = null;
+                currentAiText = '';
+                setInputState(true);
+            }
+            break;
+
+        case 'log':
+            appendLog(msg.message);
+            break;
+
+        case 'status':
+            statusText.textContent = msg.text;
+            runningText.textContent = msg.text;
+            break;
+    }
+}
+
+function startAiMessage() {
+    currentAiMsg = document.createElement('div');
+    currentAiMsg.className = 'message ai';
+    const prefix = document.createElement('span');
+    prefix.style.color = 'var(--green)';
+    prefix.style.fontWeight = '600';
+    const content = document.createElement('div');
+    content.className = 'content';
+    currentAiMsg.appendChild(content);
+    chatArea.appendChild(currentAiMsg);
+}
+
+function renderCurrentAi() {
+    if (!currentAiMsg) return;
+    const content = currentAiMsg.querySelector('.content');
+    // 去掉开头的 "AI: " 前缀
+    let text = currentAiText;
+    if (text.startsWith('AI: ')) text = text.substring(4);
+    content.innerHTML = marked.parse(text);
+}
+
+function setInputState(enabled) {
+    inputField.disabled = !enabled;
+    btnSend.disabled = !enabled;
+    btnCancel.style.display = enabled ? 'none' : 'inline-block';
+    btnSend.style.display = enabled ? 'inline-block' : 'none';
+    runningStatus.className = enabled ? 'running-status' : 'running-status active';
+    if (enabled) {
+        inputField.focus();
+        statusText.textContent = '';
+        runningText.textContent = '';
+    }
+}
+
+function sendMessage() {
+    const text = inputField.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'input', text }));
+    inputField.value = '';
+}
+
+function cancelAi() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'cancel' }));
+}
+
+function appendLog(message) {
+    logContent.textContent += (logContent.textContent ? '\n' : '') + message;
+    logArea.scrollTop = logArea.scrollHeight;
+}
+
+function scrollToBottom() {
+    chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// 事件绑定
+btnSend.addEventListener('click', sendMessage);
+btnCancel.addEventListener('click', cancelAi);
+inputField.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+logToggle.addEventListener('click', () => {
+    logArea.classList.toggle('open');
+    logToggle.textContent = logArea.classList.contains('open') ? '▼ 日志' : '▶ 日志';
+});
+
+// 初始状态
+setInputState(false);
+connect();
+</script>
+</body>
+</html>
