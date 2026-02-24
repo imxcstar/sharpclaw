@@ -9,7 +9,7 @@ public class SharpclawConfig
     /// <summary>
     /// 当前配置版本。每次结构变更时递增，用于自动迁移。
     /// </summary>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,6 +21,7 @@ public class SharpclawConfig
     public DefaultAgentConfig Default { get; set; } = new();
     public AgentsConfig Agents { get; set; } = new();
     public MemoryConfig Memory { get; set; } = new();
+    public QQBotConfig QQBot { get; set; } = new();
 
     public static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -78,6 +79,7 @@ public class SharpclawConfig
         EncryptAgentKey(Agents.Summarizer);
         Memory.EmbeddingApiKey = DataProtector.Encrypt(Memory.EmbeddingApiKey);
         Memory.RerankApiKey = DataProtector.Encrypt(Memory.RerankApiKey);
+        QQBot.ClientSecret = DataProtector.Encrypt(QQBot.ClientSecret);
     }
 
     private void DecryptKeys()
@@ -89,6 +91,7 @@ public class SharpclawConfig
         DecryptAgentKey(Agents.Summarizer);
         Memory.EmbeddingApiKey = DataProtector.Decrypt(Memory.EmbeddingApiKey);
         Memory.RerankApiKey = DataProtector.Decrypt(Memory.RerankApiKey);
+        QQBot.ClientSecret = DataProtector.Decrypt(QQBot.ClientSecret);
     }
 
     private static void EncryptAgentKey(AgentConfig agent)
@@ -136,6 +139,14 @@ public class AgentsConfig
     public AgentConfig Recaller { get; set; } = new();
     public AgentConfig Saver { get; set; } = new();
     public AgentConfig Summarizer { get; set; } = new();
+}
+
+public class QQBotConfig
+{
+    public bool Enabled { get; set; } = false;
+    public string AppId { get; set; } = "";
+    public string ClientSecret { get; set; } = "";
+    public bool Sandbox { get; set; } = false;
 }
 
 public class MemoryConfig
@@ -202,6 +213,21 @@ public static class ConfigMigrator
                 ["saver"] = new JsonObject(),
                 ["summarizer"] = new JsonObject(),
             };
+        },
+
+        // v4 → v5: 新增 QQ Bot 配置
+        [5] = json =>
+        {
+            if (!json.ContainsKey("qqBot"))
+            {
+                json["qqBot"] = new JsonObject
+                {
+                    ["enabled"] = false,
+                    ["appId"] = "",
+                    ["clientSecret"] = "",
+                    ["sandbox"] = false,
+                };
+            }
         },
     };
 

@@ -9,6 +9,12 @@ if (args.Contains("serve"))
     return;
 }
 
+if (args.Contains("qqbot"))
+{
+    await sharpclaw.QQBot.QQBotServer.RunAsync(args);
+    return;
+}
+
 // ── Terminal.Gui 初始化 ──
 using var app = Application.Create().Init();
 

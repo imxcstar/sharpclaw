@@ -47,6 +47,13 @@ public sealed class ConfigDialog : Dialog
     private readonly List<View> _embeddingViews = [];
     private readonly List<View> _rerankViews = [];
 
+    // QQ Bot 配置
+    private readonly CheckBox _qqBotEnabledCheck;
+    private readonly TextField _qqBotAppIdField;
+    private readonly TextField _qqBotClientSecretField;
+    private readonly CheckBox _qqBotSandboxCheck;
+    private readonly List<View> _qqBotViews = [];
+
     public bool Saved { get; private set; }
 
     public ConfigDialog()
@@ -153,6 +160,32 @@ public sealed class ConfigDialog : Dialog
 
         tabView.AddTab(CreateTab(tabView, "向量记忆", memoryView), false);
 
+        // ── QQ Bot Tab ──
+        var qqBotView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
+        y = 1;
+
+        _qqBotEnabledCheck = new CheckBox { Text = "启用 QQ Bot", X = 1, Y = y, Value = CheckState.UnChecked };
+        _qqBotEnabledCheck.ValueChanged += OnQQBotEnabledChanged;
+        y += 2;
+
+        var qqAppIdLabel = new Label { Text = "AppId:", X = 1, Y = y };
+        _qqBotAppIdField = new TextField { X = 14, Y = y, Width = Dim.Fill(2) };
+        _qqBotViews.AddRange([qqAppIdLabel, _qqBotAppIdField]);
+        y += 2;
+
+        var qqSecretLabel = new Label { Text = "Secret:", X = 1, Y = y };
+        _qqBotClientSecretField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Secret = true };
+        _qqBotViews.AddRange([qqSecretLabel, _qqBotClientSecretField]);
+        y += 2;
+
+        _qqBotSandboxCheck = new CheckBox { Text = "沙箱模式", X = 1, Y = y, Value = CheckState.UnChecked };
+        _qqBotViews.Add(_qqBotSandboxCheck);
+
+        qqBotView.Add(_qqBotEnabledCheck);
+        foreach (var v in _qqBotViews) qqBotView.Add(v);
+
+        tabView.AddTab(CreateTab(tabView, "QQ Bot", qqBotView), false);
+
         // ── 按钮 ──
         var saveButton = new Button { Text = "保存", IsDefault = true };
         saveButton.Accepting += OnSave;
@@ -171,6 +204,7 @@ public sealed class ConfigDialog : Dialog
 
         // 初始化记忆字段可见性
         OnMemoryEnabledChanged(null, null!);
+        OnQQBotEnabledChanged(null, null!);
     }
 
     /// <summary>
@@ -201,7 +235,14 @@ public sealed class ConfigDialog : Dialog
         _rerankApiKeyField.Text = config.Memory.RerankApiKey;
         _rerankModelField.Text = config.Memory.RerankModel;
 
+        // QQ Bot
+        _qqBotEnabledCheck.Value = config.QQBot.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _qqBotAppIdField.Text = config.QQBot.AppId;
+        _qqBotClientSecretField.Text = config.QQBot.ClientSecret;
+        _qqBotSandboxCheck.Value = config.QQBot.Sandbox ? CheckState.Checked : CheckState.UnChecked;
+
         OnMemoryEnabledChanged(null, null!);
+        OnQQBotEnabledChanged(null, null!);
     }
 
     private void OnDefaultProviderChanged(object? sender, ValueChangedEventArgs<int?> e)
@@ -224,6 +265,12 @@ public sealed class ConfigDialog : Dialog
     {
         var enabled = _rerankEnabledCheck.Value == CheckState.Checked;
         foreach (var v in _rerankViews) v.Visible = enabled;
+    }
+
+    private void OnQQBotEnabledChanged(object? sender, ValueChangedEventArgs<CheckState> e)
+    {
+        var enabled = _qqBotEnabledCheck.Value == CheckState.Checked;
+        foreach (var v in _qqBotViews) v.Visible = enabled;
     }
 
     private void OnSave(object? sender, CommandEventArgs e)
@@ -265,6 +312,13 @@ public sealed class ConfigDialog : Dialog
                 RerankEndpoint = memoryEnabled && rerankEnabled ? _rerankEndpointField.Text ?? "" : "",
                 RerankApiKey = memoryEnabled && rerankEnabled ? _rerankApiKeyField.Text ?? "" : "",
                 RerankModel = memoryEnabled && rerankEnabled ? _rerankModelField.Text ?? "" : "",
+            },
+            QQBot = new QQBotConfig
+            {
+                Enabled = _qqBotEnabledCheck.Value == CheckState.Checked,
+                AppId = _qqBotAppIdField.Text ?? "",
+                ClientSecret = _qqBotClientSecretField.Text ?? "",
+                Sandbox = _qqBotSandboxCheck.Value == CheckState.Checked,
             }
         };
 
