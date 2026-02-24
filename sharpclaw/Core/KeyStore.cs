@@ -170,29 +170,72 @@ public static class KeyStore
         {
             var (exitCode, output) = RunProcess("secret-tool",
                 $"lookup service \"{service}\" account \"{account}\"");
-            if (exitCode != 0 || string.IsNullOrWhiteSpace(output))
-                return null;
-            try { return Convert.FromBase64String(output.Trim()); }
-            catch { return null; }
+            if (exitCode == 0 && !string.IsNullOrWhiteSpace(output))
+            {
+                try { return Convert.FromBase64String(output.Trim()); }
+                catch { /* fall through to file fallback */ }
+            }
+
+            return FileFallback.Read();
         }
 
         public static void Write(string service, string account, byte[] data)
         {
             var b64 = Convert.ToBase64String(data);
-            var psi = new ProcessStartInfo("secret-tool",
-                $"store --label=\"{service}\" service \"{service}\" account \"{account}\"")
+            try
             {
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            using var proc = Process.Start(psi)!;
-            proc.StandardInput.Write(b64);
-            proc.StandardInput.Close();
-            proc.WaitForExit(5000);
-            if (proc.ExitCode != 0)
-                throw new InvalidOperationException("写入 Linux secret-tool 失败");
+                var psi = new ProcessStartInfo("secret-tool",
+                    $"store --label=\"{service}\" service \"{service}\" account \"{account}\"")
+                {
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                };
+                using var proc = Process.Start(psi)!;
+                proc.StandardInput.Write(b64);
+                proc.StandardInput.Close();
+                proc.WaitForExit(5000);
+                if (proc.ExitCode == 0)
+                    return;
+            }
+            catch
+            {
+                // secret-tool 不可用，使用文件回退
+            }
+
+            AppLogger.Log("[KeyStore] secret-tool 不可用，使用文件存储密钥");
+            FileFallback.Write(data);
+        }
+    }
+
+    #endregion
+
+    #region File Fallback (Linux without secret-tool)
+
+    private static class FileFallback
+    {
+        private static string KeyFilePath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".sharpclaw", ".keyfile");
+
+        public static byte[]? Read()
+        {
+            if (!File.Exists(KeyFilePath))
+                return null;
+            try { return Convert.FromBase64String(File.ReadAllText(KeyFilePath).Trim()); }
+            catch { return null; }
+        }
+
+        public static void Write(byte[] data)
+        {
+            var dir = Path.GetDirectoryName(KeyFilePath)!;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(KeyFilePath, Convert.ToBase64String(data));
+
+            // chmod 600
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                RunProcess("chmod", $"600 \"{KeyFilePath}\"");
         }
     }
 
