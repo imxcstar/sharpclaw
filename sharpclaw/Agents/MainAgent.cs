@@ -113,19 +113,11 @@ public class MainAgent
                 if (string.IsNullOrEmpty(input))
                     continue;
 
-                if (input is "/exit" or "/quit")
-                {
-                    _chatIO.RequestStop();
+                var cmdResult = await _chatIO.HandleCommandAsync(input);
+                if (cmdResult == CommandResult.Exit)
                     break;
-                }
-
-                if (input is "/config")
-                {
-                    var saved = await _chatIO.ShowConfigAsync();
-                    if (saved)
-                        _chatIO.AppendChatLine("配置已保存，重启后生效。\n");
+                if (cmdResult == CommandResult.Handled)
                     continue;
-                }
 
                 await ProcessTurnAsync(input, cancellationToken);
             }

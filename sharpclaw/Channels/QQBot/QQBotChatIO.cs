@@ -104,6 +104,24 @@ public sealed class QQBotChatIO : IChatIO
         _stopCts.Cancel();
     }
 
+    public Task<CommandResult> HandleCommandAsync(string input)
+    {
+        switch (input)
+        {
+            case "/help":
+                AppendChat("""
+                    可用指令:
+                      /help   - 显示帮助
+                      /stop   - 停止当前 AI 处理
+                      /status - 查看运行状态
+                    """);
+                return Task.FromResult(CommandResult.Handled);
+
+            default:
+                return Task.FromResult(input.StartsWith('/') ? CommandResult.Handled : CommandResult.NotACommand);
+        }
+    }
+
     /// <summary>
     /// 刷新输出缓冲区，将累积的 AI 回复发送到 QQ。
     /// </summary>

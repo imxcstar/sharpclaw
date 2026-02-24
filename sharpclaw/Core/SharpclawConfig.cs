@@ -9,7 +9,7 @@ public class SharpclawConfig
     /// <summary>
     /// 当前配置版本。每次结构变更时递增，用于自动迁移。
     /// </summary>
-    public const int CurrentVersion = 6;
+    public const int CurrentVersion = 7;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -146,8 +146,17 @@ public class AgentsConfig
 /// </summary>
 public class ChannelsConfig
 {
+    public TuiChannelConfig Tui { get; set; } = new();
     public WebChannelConfig Web { get; set; } = new();
     public QQBotChannelConfig QQBot { get; set; } = new();
+}
+
+public class TuiChannelConfig
+{
+    public bool LogCollapsed { get; set; } = false;
+    public string QuitKey { get; set; } = "Ctrl+Q";
+    public string ToggleLogKey { get; set; } = "Ctrl+L";
+    public string CancelKey { get; set; } = "Esc";
 }
 
 public class WebChannelConfig
@@ -275,6 +284,22 @@ public static class ConfigMigrator
             }
 
             json["channels"] = channels;
+        },
+
+        // v6 → v7: 新增 TUI 渠道配置
+        [7] = json =>
+        {
+            var channels = json["channels"]?.AsObject();
+            if (channels is not null && !channels.ContainsKey("tui"))
+            {
+                channels["tui"] = new JsonObject
+                {
+                    ["logCollapsed"] = false,
+                    ["quitKey"] = "Ctrl+Q",
+                    ["toggleLogKey"] = "Ctrl+L",
+                    ["cancelKey"] = "Esc",
+                };
+            }
         },
     };
 

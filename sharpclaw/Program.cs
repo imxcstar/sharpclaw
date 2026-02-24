@@ -39,7 +39,7 @@ if (bootstrap.MemoryStore is null)
     AppLogger.Log("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");
 
 // ── 创建 ChatWindow 并启动主智能体 ──
-var chatWindow = new ChatWindow();
+var chatWindow = new ChatWindow(bootstrap.Config.Channels.Tui);
 var agent = new sharpclaw.Agents.MainAgent(
     bootstrap.Config, bootstrap.MemoryStore, bootstrap.CommandSkills, chatIO: chatWindow);
 

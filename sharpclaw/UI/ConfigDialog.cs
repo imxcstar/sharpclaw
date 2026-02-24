@@ -47,6 +47,12 @@ public sealed class ConfigDialog : Dialog
     private readonly List<View> _embeddingViews = [];
     private readonly List<View> _rerankViews = [];
 
+    // TUI 配置
+    private readonly CheckBox _tuiLogCollapsedCheck;
+    private readonly TextField _tuiQuitKeyField;
+    private readonly TextField _tuiToggleLogKeyField;
+    private readonly TextField _tuiCancelKeyField;
+
     // QQ Bot 配置
     private readonly CheckBox _qqBotEnabledCheck;
     private readonly TextField _qqBotAppIdField;
@@ -169,6 +175,30 @@ public sealed class ConfigDialog : Dialog
         var channelsView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
         y = 1;
 
+        // TUI
+        var tuiTitle = new Label { Text = "── TUI 终端 ──", X = 1, Y = y };
+        channelsView.Add(tuiTitle);
+        y += 1;
+
+        _tuiLogCollapsedCheck = new CheckBox { Text = "默认收起日志区", X = 1, Y = y, Value = CheckState.UnChecked };
+        channelsView.Add(_tuiLogCollapsedCheck);
+        y += 2;
+
+        var tuiQuitKeyLabel = new Label { Text = "退出键:", X = 1, Y = y };
+        _tuiQuitKeyField = new TextField { X = 14, Y = y, Width = 20, Text = "Ctrl+Q" };
+        channelsView.Add(tuiQuitKeyLabel, _tuiQuitKeyField);
+        y += 2;
+
+        var tuiToggleLogLabel = new Label { Text = "日志切换:", X = 1, Y = y };
+        _tuiToggleLogKeyField = new TextField { X = 14, Y = y, Width = 20, Text = "Ctrl+L" };
+        channelsView.Add(tuiToggleLogLabel, _tuiToggleLogKeyField);
+        y += 2;
+
+        var tuiCancelLabel = new Label { Text = "取消键:", X = 1, Y = y };
+        _tuiCancelKeyField = new TextField { X = 14, Y = y, Width = 20, Text = "Esc" };
+        channelsView.Add(tuiCancelLabel, _tuiCancelKeyField);
+        y += 2;
+
         // Web 服务
         var webTitle = new Label { Text = "── Web 服务 ──", X = 1, Y = y };
         channelsView.Add(webTitle);
@@ -272,6 +302,12 @@ public sealed class ConfigDialog : Dialog
         _webEnabledCheck.Value = config.Channels.Web.Enabled ? CheckState.Checked : CheckState.UnChecked;
         _webPortField.Text = config.Channels.Web.Port.ToString();
 
+        // TUI
+        _tuiLogCollapsedCheck.Value = config.Channels.Tui.LogCollapsed ? CheckState.Checked : CheckState.UnChecked;
+        _tuiQuitKeyField.Text = config.Channels.Tui.QuitKey;
+        _tuiToggleLogKeyField.Text = config.Channels.Tui.ToggleLogKey;
+        _tuiCancelKeyField.Text = config.Channels.Tui.CancelKey;
+
         OnMemoryEnabledChanged(null, null!);
         OnWebEnabledChanged(null, null!);
         OnQQBotEnabledChanged(null, null!);
@@ -353,6 +389,13 @@ public sealed class ConfigDialog : Dialog
             },
             Channels = new ChannelsConfig
             {
+                Tui = new TuiChannelConfig
+                {
+                    LogCollapsed = _tuiLogCollapsedCheck.Value == CheckState.Checked,
+                    QuitKey = _tuiQuitKeyField.Text ?? "Ctrl+Q",
+                    ToggleLogKey = _tuiToggleLogKeyField.Text ?? "Ctrl+L",
+                    CancelKey = _tuiCancelKeyField.Text ?? "Esc",
+                },
                 Web = new WebChannelConfig
                 {
                     Enabled = _webEnabledCheck.Value == CheckState.Checked,

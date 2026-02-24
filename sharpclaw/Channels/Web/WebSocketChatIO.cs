@@ -137,6 +137,28 @@ public sealed class WebSocketChatIO : IChatIO, IAsyncDisposable
         }
     }
 
+    public Task<CommandResult> HandleCommandAsync(string input)
+    {
+        switch (input)
+        {
+            case "/exit" or "/quit":
+                RequestStop();
+                return Task.FromResult(CommandResult.Exit);
+
+            case "/help":
+                AppendChatLine("""
+                    可用指令:
+                      /help - 显示帮助
+                      /exit - 断开连接
+
+                    """);
+                return Task.FromResult(CommandResult.Handled);
+
+            default:
+                return Task.FromResult(input.StartsWith('/') ? CommandResult.Handled : CommandResult.NotACommand);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _connectionCts.Cancel();
