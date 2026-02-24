@@ -17,6 +17,12 @@ public static class KeyStore
     private const string ServiceName = "sharpclaw";
     private const string AccountName = "config-key";
 
+    /// <summary>
+    /// 密码输入回调：参数为提示文本，返回密码或 null 表示跳过。
+    /// 由 UI 层在启动时设置。
+    /// </summary>
+    public static Func<string, string?>? PasswordPrompt { get; set; }
+
     public static byte[] GetOrCreateKey()
     {
         var key = TryGetKey();
@@ -138,7 +144,42 @@ public static class KeyStore
 
     private static class MacKeychain
     {
+        private static bool _keychainUnlocked;
+
         public static byte[]? Read(string service, string account)
+        {
+            var result = TryRead(service, account);
+            if (result is not null)
+                return result;
+
+            if (!_keychainUnlocked && TryUnlockKeychain())
+            {
+                _keychainUnlocked = true;
+                return TryRead(service, account);
+            }
+
+            return null;
+        }
+
+        public static void Write(string service, string account, byte[] data)
+        {
+            if (TryWrite(service, account, data))
+                return;
+
+            if (!_keychainUnlocked && TryUnlockKeychain())
+            {
+                _keychainUnlocked = true;
+                if (TryWrite(service, account, data))
+                    return;
+            }
+
+            throw new InvalidOperationException(
+                $"写入 macOS Keychain 失败: {_lastError}\n请在 GUI 环境下运行或手动执行: security unlock-keychain");
+        }
+
+        private static string _lastError = "";
+
+        private static byte[]? TryRead(string service, string account)
         {
             var (exitCode, output) = RunProcess("security",
                 $"find-generic-password -s \"{service}\" -a \"{account}\" -w");
@@ -148,15 +189,29 @@ public static class KeyStore
             catch { return null; }
         }
 
-        public static void Write(string service, string account, byte[] data)
+        private static bool TryWrite(string service, string account, byte[] data)
         {
             var b64 = Convert.ToBase64String(data);
-            // 先尝试删除旧条目
-            RunProcess("security", $"delete-generic-password -s \"{service}\" -a \"{account}\"");
-            var (exitCode, _) = RunProcess("security",
-                $"add-generic-password -s \"{service}\" -a \"{account}\" -w \"{b64}\"");
+            var (exitCode, output) = RunProcess("security",
+                $"add-generic-password -U -T /usr/bin/security -s \"{service}\" -a \"{account}\" -w \"{b64}\"");
             if (exitCode != 0)
-                throw new InvalidOperationException("写入 macOS Keychain 失败");
+                _lastError = output;
+            return exitCode == 0;
+        }
+
+        /// <summary>
+        /// 提示用户输入 macOS 登录密码解锁 Keychain。
+        /// </summary>
+        private static bool TryUnlockKeychain()
+        {
+            var password = PasswordPrompt?.Invoke("macOS Keychain 已锁定，请输入登录密码解锁:");
+            if (string.IsNullOrEmpty(password))
+                return false;
+
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var keychain = Path.Combine(home, "Library", "Keychains", "login.keychain-db");
+            var (exitCode, _) = RunProcess("security", $"unlock-keychain -p \"{password}\" \"{keychain}\"");
+            return exitCode == 0;
         }
     }
 
@@ -253,8 +308,9 @@ public static class KeyStore
             };
             using var proc = Process.Start(psi)!;
             var output = proc.StandardOutput.ReadToEnd();
+            var error = proc.StandardError.ReadToEnd();
             proc.WaitForExit(5000);
-            return (proc.ExitCode, output);
+            return (proc.ExitCode, string.IsNullOrEmpty(output) ? error : output);
         }
         catch
         {

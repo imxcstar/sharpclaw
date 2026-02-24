@@ -23,7 +23,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+		<EmbeddedResource Include="wwwroot\index.html" LogicalName="index.html" />
 	</ItemGroup>
 
 </Project>

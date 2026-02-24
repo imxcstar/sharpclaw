@@ -1,8 +1,8 @@
 using System.Net.WebSockets;
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.FileProviders;
 using sharpclaw.Core;
 using sharpclaw.UI;
 
@@ -38,19 +38,13 @@ public static class WebServer
         var app = builder.Build();
         app.UseWebSockets();
 
-        // 静态文件托管 wwwroot/
-        var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-        if (Directory.Exists(wwwroot))
+        // 从嵌入资源提供 index.html
+        var indexHtml = LoadEmbeddedResource("index.html");
+        app.MapGet("/", (HttpContext ctx) =>
         {
-            app.UseDefaultFiles(new DefaultFilesOptions
-            {
-                FileProvider = new PhysicalFileProvider(wwwroot)
-            });
-            app.UseStaticFiles(new StaticFileOptions
-            {
-                FileProvider = new PhysicalFileProvider(wwwroot)
-            });
-        }
+            ctx.Response.ContentType = "text/html; charset=utf-8";
+            return ctx.Response.WriteAsync(indexHtml);
+        });
 
         // 用信号量限制单客户端
         var semaphore = new SemaphoreSlim(1, 1);
@@ -119,5 +113,13 @@ public static class WebServer
         Console.WriteLine("按 Ctrl+C 停止");
 
         await app.RunAsync();
+    }
+
+    private static string LoadEmbeddedResource(string name)
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
+            ?? throw new FileNotFoundException($"嵌入资源 '{name}' 未找到");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }
