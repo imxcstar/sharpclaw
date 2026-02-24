@@ -148,6 +148,16 @@ public sealed class ChatWindow : Runnable, IChatIO
     }
 
     /// <summary>
+    /// 回显用户输入，带 "> " 前缀。
+    /// </summary>
+    public void EchoUserInput(string input) => AppendChatLine($"> {input}\n");
+
+    /// <summary>
+    /// 开始 AI 回复，显示 "AI: " 前缀。
+    /// </summary>
+    public void BeginAiResponse() => AppendChat("AI: ");
+
+    /// <summary>
     /// 追加对话文本（流式输出用）。
     /// </summary>
     public void AppendChat(string text)

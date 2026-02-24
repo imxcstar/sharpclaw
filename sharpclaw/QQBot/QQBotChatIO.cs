@@ -84,6 +84,10 @@ public sealed class QQBotChatIO : IChatIO
         _outputBuffer.AppendLine(text);
     }
 
+    public void EchoUserInput(string input) { }
+
+    public void BeginAiResponse() { }
+
     public void ShowRunning()
     {
         _status = "AI 处理中...";
@@ -111,25 +115,9 @@ public sealed class QQBotChatIO : IChatIO
             return;
         }
 
-        // 清理输出：去掉 "> xxx" 回显行和 "AI: " 前缀
         var output = _outputBuffer.ToString().Trim();
         _outputBuffer.Clear();
 
-        // 去掉开头的用户输入回显行
-        if (output.StartsWith("> "))
-        {
-            var idx = output.IndexOf('\n');
-            if (idx >= 0)
-                output = output[(idx + 1)..].TrimStart();
-            else
-                output = "";
-        }
-
-        // 去掉 "AI: " 前缀
-        if (output.StartsWith("AI: "))
-            output = output[4..];
-
-        output = output.Trim();
         if (string.IsNullOrEmpty(output))
             return;
 

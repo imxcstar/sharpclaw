@@ -12,6 +12,12 @@ public interface IChatIO
     /// <summary>等待用户输入一条消息。</summary>
     Task<string> ReadInputAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>回显用户输入。各前端自行决定格式。</summary>
+    void EchoUserInput(string input);
+
+    /// <summary>开始 AI 回复。各前端自行决定前缀/格式。</summary>
+    void BeginAiResponse();
+
     /// <summary>追加流式文本（AI 输出片段）。</summary>
     void AppendChat(string text);
 

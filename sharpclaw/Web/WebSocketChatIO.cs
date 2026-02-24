@@ -107,6 +107,16 @@ public sealed class WebSocketChatIO : IChatIO, IAsyncDisposable
         _sender.Send(new { type = "chatLine", text });
     }
 
+    public void EchoUserInput(string input)
+    {
+        _sender.Send(new { type = "chatLine", text = $"> {input}\n" });
+    }
+
+    public void BeginAiResponse()
+    {
+        _sender.Send(new { type = "chat", text = "AI: " });
+    }
+
     public void ShowRunning()
     {
         _sender.Send(new { type = "state", state = "running" });

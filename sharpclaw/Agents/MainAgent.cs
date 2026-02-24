@@ -134,7 +134,7 @@ public class MainAgent
 
     private async Task ProcessTurnAsync(string input, CancellationToken cancellationToken)
     {
-        _chatIO.AppendChatLine($"> {input}\n");
+        _chatIO.EchoUserInput(input);
         _chatIO.ShowRunning();
 
         using var aiCts = CancellationTokenSource.CreateLinkedTokenSource(
@@ -166,7 +166,7 @@ public class MainAgent
 
         // 流式输出
         AppLogger.SetStatus("AI 思考中...");
-        _chatIO.AppendChat("AI: ");
+        _chatIO.BeginAiResponse();
         try
         {
             await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(aiToken))
