@@ -8,6 +8,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="Anthropic" Version="12.5.0" />
 		<PackageReference Include="Cronos" Version="0.11.1" />
 		<PackageReference Include="GeminiDotnet.Extensions.AI" Version="0.22.0" />
@@ -15,6 +19,10 @@
 		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="*-*" />
 		<PackageReference Include="Terminal.Gui" Version="2.0.0-develop.5039" />
 		<PackageReference Include="ToonSharp" Version="1.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 </Project>

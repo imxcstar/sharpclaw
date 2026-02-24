@@ -6,81 +6,83 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 dotnet build
-dotnet run --project sharpclaw
+dotnet run --project sharpclaw            # TUI mode (Terminal.Gui)
+dotnet run --project sharpclaw config     # Re-run config dialog
+dotnet run --project sharpclaw serve      # Web mode (WebSocket server, default port 5000)
+dotnet run --project sharpclaw serve --port 8080
 ```
 
-First run (or `dotnet run --project sharpclaw config`) launches a TUI config dialog that writes `~/.sharpclaw/config.json`.
+First run auto-launches the config dialog (Terminal.Gui `ConfigDialog`) which writes `~/.sharpclaw/config.json`. Web mode requires config to exist already.
 
 No test project exists. Target framework is .NET 10 (`net10.0`).
 
 ## Configuration
 
-Config lives in `~/.sharpclaw/config.json` (created by `UI/ConfigDialog.cs`). Version 4 structure with auto-migration from older versions.
+All settings live in `~/.sharpclaw/config.json`. Supports three providers: Anthropic, OpenAI, Gemini. Each sub-agent (main, recaller, saver, summarizer) can override the default provider/endpoint/model or inherit from `default`.
 
-Per-agent config model: a `default` section provides fallback values (provider/endpoint/apiKey/model), and each agent in `agents` (main/recaller/saver/summarizer) can override any field or be disabled. `memory` section configures embedding and rerank independently.
+API keys are encrypted at rest with AES-256-CBC (`DataProtector`). The encryption key is stored in the OS credential manager via `KeyStore` (Windows Credential Manager / macOS Keychain / Linux libsecret).
 
-Three providers supported: Anthropic, OpenAI, Gemini. See `Core/ClientFactory.cs` for client instantiation. API keys are encrypted at rest via `Core/DataProtector.cs` (AES-256-CBC, key from OS credential store via `Core/KeyStore.cs`).
+See `Core/SharpclawConfig.cs` for the schema and `Core/ClientFactory.cs` for client instantiation.
 
 ## Architecture
 
-Sharpclaw is a TUI-based AI agent with long-term memory, built on `Microsoft.Agents.AI`, `Microsoft.Extensions.AI`, and `Terminal.Gui` v2.
+Sharpclaw is a console/web AI agent with long-term memory, built on `Microsoft.Agents.AI` and `Microsoft.Extensions.AI`.
 
-### Main Loop (`Program.cs`)
+### Dual Frontend via IChatIO
 
-Top-level statements wire everything together:
-1. `Application.Create().Init()` — Terminal.Gui lifecycle
-2. Detects config: runs `ConfigDialog` if `~/.sharpclaw/config.json` missing or `config` arg passed
-3. Loads `SharpclawConfig` → passes to `MainAgent` which creates per-agent `IChatClient` instances via `ClientFactory.CreateAgentClient()`
-4. `MainAgent` creates sub-agents internally based on each agent's `Enabled` flag
-5. Agent runs in `Task.Run()`, TUI runs in `app.Run(chatWindow)` on main thread
+The AI engine is decoupled from the frontend through `Abstractions/IChatIO.cs`. Two implementations exist:
+- `UI/ChatWindow.cs` — TUI frontend using Terminal.Gui v2 (chat area + log area + input field)
+- `Web/WebSocketChatIO.cs` — WebSocket frontend, served by `Web/WebServer.cs` (ASP.NET Core), single-client only
 
-### UI Layer (`sharpclaw.UI`)
+Both frontends share the same agent logic. `Abstractions/IAppLogger.cs` + `AppLogger` provide a similar abstraction for logging.
 
-Terminal.Gui v2 (develop build). Key patterns:
-- `ChatWindow` (extends `Runnable`): chat area (60%), log area, input field, spinner/status. All text writes are buffered with 100ms flush + lock to avoid `WordWrap` index crashes.
-- `AppLogger`: static global log router with same buffered write pattern. All agents log via `AppLogger.Log()` and update status via `AppLogger.SetStatus()`.
-- `ConfigDialog` (extends `Dialog`): TabView with 6 tabs (默认/主智能体/记忆回忆/记忆保存/对话总结/记忆).
-- Thread safety: background agent threads must use `App.Invoke()` for UI updates (not `Application.Invoke` which is obsolete in v2).
+### Entry Point (`Program.cs`)
 
-### Memory Pipeline (4 agents, 3 phases)
+1. `args.Contains("serve")` → dispatches to `WebServer.RunAsync()` (web mode)
+2. Otherwise → Terminal.Gui init → `ConfigDialog` if config missing → `AgentBootstrap.Initialize()` → `ChatWindow` + `MainAgent` → TUI event loop
 
-Each sub-agent wraps its own `IChatClient` (potentially different provider/model) with `UseFunctionInvocation()`:
+`Core/AgentBootstrap.Initialize()` is the shared bootstrap used by both TUI and Web mode: loads config, creates `TaskManager`, registers all command tools as `AIFunction[]`, creates `IMemoryStore`.
 
-**Phase 1 — Recall (main loop, before input):**
-- `MemoryRecaller` — Tools: `KeepMemories`, `SearchMemory`. Maintains `_currentMemories` state for incremental injection. Injects a system message tagged with `AutoMemoryKey`.
+### MainAgent and Memory Pipeline
 
-**Phase 2 — Save (inside `SlidingWindowChatReducer`, after message added):**
-- `MemorySaver` — Tools: `SaveMemory`, `UpdateMemory`, `RemoveMemory`. Searches existing memories first, then decides save/update/remove. Supports regex template extraction from conversation text (`{0}` placeholders + `patterns[]`).
+`Agents/MainAgent.cs` owns the conversation loop. It takes `IChatIO` for I/O and wires up:
+- `MemoryRecaller` — recalls relevant memories before each turn, injects as system message (`AutoMemoryKey`)
+- `MemorySaver` — saves/updates/removes memories after each message (inside `SlidingWindowChatReducer`)
+- `ConversationSummarizer` — summarizes trimmed messages when sliding window overflows (`AutoSummaryKey`)
 
-**Phase 3 — Trim + Summarize (inside `SlidingWindowChatReducer`):**
-- Strips old injected messages (`AutoMemoryKey`, `AutoSummaryKey`)
-- Sliding window with overflow buffer: trims when `count > windowSize + overflowBuffer`, cuts back to `windowSize`
-- `ConversationSummarizer` — Incrementally summarizes trimmed messages, injects as system message tagged with `AutoSummaryKey`.
+Each sub-agent wraps its own `IChatClient` (via `ClientFactory.CreateAgentClient`) with `UseFunctionInvocation()` for tool calling.
+
+The main agent also exposes `SearchMemory` and `GetRecentMemories` as tools the AI can call directly.
 
 ### Memory Store
 
 `VectorMemoryStore` implements `IMemoryStore`:
 - Persists to `memories.json`
-- Two-phase search: vector recall → optional `DashScopeRerankClient` rerank
-- Semantic dedup on add: cosine similarity > `SimilarityThreshold` (0.85) triggers merge instead of insert
+- Two-phase search: vector embedding recall → optional `DashScopeRerankClient` rerank
+- Semantic dedup: cosine similarity > 0.85 triggers merge instead of insert
+- `UpdateAsync` re-generates embedding when content changes
 
-`InMemoryMemoryStore` exists as a simpler in-memory alternative (keyword-based search).
+`InMemoryMemoryStore` is a simpler keyword-based alternative.
 
-### Command System (`sharpclaw.Commands`)
+### Command System (`Commands/`)
 
-Agent tools registered via `AIFunctionFactory.Create(delegate)` in `Program.cs`. All commands extend `CommandBase` which provides `RunProcess`/`RunNative` for foreground/background execution via `TaskManager`.
+Agent tools registered via `AIFunctionFactory.Create(delegate)`:
+- `FileCommands` — dir, cat, create, edit, rename, delete, find, search, mkdir, append
+- `ProcessCommands` — dotnet, nodejs, docker execution
+- `HttpCommands` — HTTP requests
+- `SystemCommands` — system info, exit
+- `TaskCommands` — background task management (status, read, wait, terminate, list, remove, stdin)
 
-### Key Types
+All extend `CommandBase` which provides `RunProcess`/`RunNative` for foreground/background execution via `TaskManager`.
 
-- `Core/SharpclawConfig.cs` — `SharpclawConfig`, `DefaultAgentConfig`, `AgentConfig`, `AgentsConfig`, `MemoryConfig`, `ConfigMigrator`
-- `Core/ClientFactory.cs` — `CreateChatClient(DefaultAgentConfig)`, `CreateAgentClient(config, agent)`, embedding/rerank/memory store creation
-- `Memory/IMemoryStore.cs` — `IMemoryStore` interface
-- `Memory/MemoryEntry.cs` — `MemoryEntry`, `MemoryStats`
+### Config Dialog (`UI/ConfigDialog.cs`)
+
+Terminal.Gui dialog with `TabView` pages: default provider, per-agent overrides (main/recaller/saver/summarizer), and vector memory settings (embedding + rerank). Replaces the old console-based `ConfigWizard`.
 
 ## Conventions
 
-- Language: Chinese prompts and UI text, English code identifiers
-- All sub-agents use tool calling (not text format parsing) for structured output
+- Language: Chinese prompts and UI strings, English code identifiers
+- All sub-agents use tool calling (not text parsing) for structured output
 - Injected messages use `AdditionalProperties` dictionary keys (`AutoMemoryKey`, `AutoSummaryKey`) for identification and stripping
 - Session persistence: `history.json` (agent state), `memories.json` (vector memory store)
-- Config versioning: `ConfigMigrator` runs sequential migrations (v1→v2→v3→v4) on load
+- WebSocket protocol: JSON messages with `type` field (`input`, `cancel`, `chat`, `chatLine`, `state`)

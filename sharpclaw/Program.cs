@@ -1,9 +1,13 @@
-using sharpclaw.Commands;
 using sharpclaw.Core;
-using sharpclaw.Core.TaskManagement;
 using sharpclaw.UI;
-using Microsoft.Extensions.AI;
 using Terminal.Gui.App;
+
+// ── 模式选择 ──
+if (args.Contains("serve"))
+{
+    await sharpclaw.Web.WebServer.RunAsync(args);
+    return;
+}
 
 // ── Terminal.Gui 初始化 ──
 using var app = Application.Create().Init();
@@ -21,62 +25,16 @@ if (args.Contains("config") || !SharpclawConfig.Exists())
         return;
 }
 
-var config = SharpclawConfig.Load();
+// ── 初始化 ──
+var bootstrap = AgentBootstrap.Initialize();
 
-// ── 基础设施 ──
-var taskManager = new TaskManager();
-
-// ── 命令工具 ──
-var systemCommands = new SystemCommands(taskManager);
-var fileCommands = new FileCommands(taskManager);
-var httpCommands = new HttpCommands(taskManager);
-var processCommands = new ProcessCommands(taskManager);
-var taskCommands = new TaskCommands(taskManager);
-
-var commandSkills = new List<Delegate>
-{
-    systemCommands.GetSystemInfo,
-    systemCommands.ExitProgram,
-
-    fileCommands.CommandDir,
-    fileCommands.CommandCat,
-    fileCommands.FileExists,
-    fileCommands.GetFileInfo,
-    fileCommands.FindFiles,
-    fileCommands.SearchInFiles,
-    fileCommands.CommandCreateText,
-    fileCommands.AppendToFile,
-    fileCommands.CommandEditText,
-    fileCommands.CommandRenameFile,
-    fileCommands.CommandMkdir,
-    fileCommands.CommandDelete,
-
-    httpCommands.CommandHttp,
-
-    processCommands.CommandDotnet,
-    processCommands.CommandNodejs,
-    processCommands.CommandDocker,
-
-    taskCommands.TaskGetStatus,
-    taskCommands.TaskRead,
-    taskCommands.TaskWait,
-    taskCommands.TaskTerminate,
-    taskCommands.TaskList,
-    taskCommands.TaskRemove,
-    taskCommands.TaskWriteStdin,
-    taskCommands.TaskCloseStdin,
-}
-.Select(d => AIFunctionFactory.Create(d))
-.ToArray();
-
-// ── 记忆存储 ──
-var memoryStore = ClientFactory.CreateMemoryStore(config);
-if (memoryStore is null)
+if (bootstrap.MemoryStore is null)
     AppLogger.Log("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");
 
 // ── 创建 ChatWindow 并启动主智能体 ──
 var chatWindow = new ChatWindow();
-var agent = new sharpclaw.Agents.MainAgent(config, memoryStore, commandSkills, chatWindow);
+var agent = new sharpclaw.Agents.MainAgent(
+    bootstrap.Config, bootstrap.MemoryStore, bootstrap.CommandSkills, chatIO: chatWindow);
 
 // 在后台线程启动智能体循环
 _ = Task.Run(() => agent.RunAsync());

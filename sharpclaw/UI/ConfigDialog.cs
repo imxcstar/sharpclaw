@@ -61,10 +61,11 @@ public sealed class ConfigDialog : Dialog
             Y = 0,
             Width = Dim.Fill(),
             Height = Dim.Fill(2),
+            CanFocus = true,
         };
 
         // ── 默认配置 Tab ──
-        var defaultView = new View { Width = Dim.Fill(), Height = Dim.Fill() };
+        var defaultView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
         var y = 1;
 
         var providerLabel = new Label { Text = "AI 供应商:", X = 1, Y = y };
@@ -91,7 +92,7 @@ public sealed class ConfigDialog : Dialog
         defaultView.Add(providerLabel, _defaultProvider, endpointLabel, _defaultEndpoint,
             apiKeyLabel, _defaultApiKey, modelLabel, _defaultModel);
 
-        tabView.AddTab(new Tab { DisplayText = "默认", View = defaultView }, true);
+        tabView.AddTab(CreateTab(tabView, "默认", defaultView), true);
 
         // ── 智能体 Tabs ──
         _mainPanel = CreateAgentPanel("主智能体", showEnabled: false);
@@ -99,16 +100,16 @@ public sealed class ConfigDialog : Dialog
         _saverPanel = CreateAgentPanel("记忆保存");
         _summarizerPanel = CreateAgentPanel("对话总结");
 
-        tabView.AddTab(new Tab { DisplayText = "主智能体", View = _mainPanel.Container }, false);
-        tabView.AddTab(new Tab { DisplayText = "记忆回忆", View = _recallerPanel.Container }, false);
-        tabView.AddTab(new Tab { DisplayText = "记忆保存", View = _saverPanel.Container }, false);
-        tabView.AddTab(new Tab { DisplayText = "对话总结", View = _summarizerPanel.Container }, false);
+        tabView.AddTab(CreateTab(tabView, "主智能体", _mainPanel.Container), false);
+        tabView.AddTab(CreateTab(tabView, "记忆回忆", _recallerPanel.Container), false);
+        tabView.AddTab(CreateTab(tabView, "记忆保存", _saverPanel.Container), false);
+        tabView.AddTab(CreateTab(tabView, "对话总结", _summarizerPanel.Container), false);
 
-        // ── 记忆 Tab ──
-        var memoryView = new View { Width = Dim.Fill(), Height = Dim.Fill() };
+        // ── 向量记忆 Tab ──
+        var memoryView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
         y = 1;
 
-        _memoryEnabledCheck = new CheckBox { Text = "启用向量记忆（禁用后降级为总结压缩）", X = 1, Y = y, Value = CheckState.Checked };
+        _memoryEnabledCheck = new CheckBox { Text = "启用向量记忆（禁用后降级为总结压缩）", X = 1, Y = y, Value = CheckState.UnChecked };
         _memoryEnabledCheck.ValueChanged += OnMemoryEnabledChanged;
         y += 2;
 
@@ -150,7 +151,7 @@ public sealed class ConfigDialog : Dialog
         foreach (var v in _embeddingViews) memoryView.Add(v);
         foreach (var v in _rerankViews) memoryView.Add(v);
 
-        tabView.AddTab(new Tab { DisplayText = "记忆", View = memoryView }, false);
+        tabView.AddTab(CreateTab(tabView, "向量记忆", memoryView), false);
 
         // ── 按钮 ──
         var saveButton = new Button { Text = "保存", IsDefault = true };
@@ -167,6 +168,9 @@ public sealed class ConfigDialog : Dialog
         AddButton(cancelButton);
 
         Add(tabView);
+
+        // 初始化记忆字段可见性
+        OnMemoryEnabledChanged(null, null!);
     }
 
     /// <summary>
@@ -283,7 +287,7 @@ public sealed class ConfigDialog : Dialog
 
     private AgentPanel CreateAgentPanel(string name, bool showEnabled = true)
     {
-        var container = new View { Width = Dim.Fill(), Height = Dim.Fill() };
+        var container = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
         var y = 1;
 
         CheckBox? enabledCheck = null;
@@ -394,4 +398,19 @@ public sealed class ConfigDialog : Dialog
     }
 
     #endregion
+
+    private static Tab CreateTab(TabView tabView, string displayText, View view)
+    {
+        var tab = new Tab { DisplayText = displayText, View = view };
+        tab.MouseEvent += (_, e) =>
+        {
+            if (e.Flags.HasFlag(MouseFlags.LeftButtonClicked) && tab.CanFocus)
+            {
+                tabView.SelectedTab = tab;
+                tab.SetFocus();
+                e.Handled = true;
+            }
+        };
+        return tab;
+    }
 }
