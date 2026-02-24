@@ -44,7 +44,6 @@ public class SlidingWindowChatReducer : IChatReducer
 
         // 从消息中提取对话日志和最新用户输入（供主动记忆使用）
         var conversationLog = new List<string>();
-        string? latestUserInput = null;
 
         foreach (var msg in all)
         {
@@ -62,7 +61,6 @@ public class SlidingWindowChatReducer : IChatReducer
             if (msg.Role == ChatRole.User)
             {
                 conversationLog.Add($"用户: {text}");
-                latestUserInput = text;
             }
             else if (msg.Role == ChatRole.Assistant)
             {
@@ -71,11 +69,11 @@ public class SlidingWindowChatReducer : IChatReducer
         }
 
         // ── 1. 主动记忆：分析对话内容，保存重要信息 ──
-        if (_memorySaver is not null && latestUserInput is not null)
+        if (_memorySaver is not null)
         {
             try
             {
-                await _memorySaver.SaveAsync(latestUserInput, conversationLog, cancellationToken);
+                await _memorySaver.SaveAsync(conversationLog, cancellationToken);
             }
             catch (Exception ex)
             {
