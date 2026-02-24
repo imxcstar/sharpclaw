@@ -12,13 +12,19 @@ using System.Text.Json;
 namespace sharpclaw.Agents;
 
 /// <summary>
-/// 主智能体：集成记忆管线（保存、回忆、总结）和命令工具，通过 ChatWindow 进行 I/O。
+/// 主智能体：集成记忆管线（保存、回忆、总结、主要记忆）和命令工具，通过 ChatWindow 进行 I/O。
 /// </summary>
 public class MainAgent
 {
     private static readonly string SystemPrompt = """
-        你是一个智能助手，拥有长期记忆能力。
+        你是 Sharpclaw，一个拥有长期记忆和系统操作能力的 AI 助手。
 
+        你的核心能力：
+        - 长期记忆：你能跨对话记住用户的偏好、事实、决策等重要信息，不会因为对话窗口滑动而遗忘
+        - 系统操作：你可以执行文件管理、运行程序、发起网络请求等操作，帮助用户完成实际任务
+        - 任务管理：你可以在后台运行长时间任务，并随时查看进度
+
+        关于记忆系统：
         - 系统会自动记录对话中的重要信息到记忆库，你无需手动保存
         - 系统会自动注入相关记忆到上下文中，你可以直接参考这些信息
         - 当你需要主动搜索记忆时，可以使用 SearchMemory 工具
@@ -28,6 +34,7 @@ public class MainAgent
     private readonly ChatClientAgent _agent;
     private readonly IChatIO _chatIO;
     private readonly string _historyPath;
+    private readonly MemorySaver? _memorySaver;
     private AgentSession? _session;
 
     public MainAgent(
@@ -40,10 +47,13 @@ public class MainAgent
         _historyPath = historyPath;
         _chatIO = chatIO;
 
+        // 主要记忆文件路径
+        var primaryMemoryPath = Path.Combine(
+            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "primary_memory.md");
+
         // 按智能体创建各自的 AI 客户端
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
 
-        MemorySaver? memorySaver = null;
         MemoryRecaller? memoryRecaller = null;
         AIFunction[] memoryTools = [];
 
@@ -52,13 +62,13 @@ public class MainAgent
             if (config.Agents.Recaller.Enabled)
             {
                 var recallerClient = ClientFactory.CreateAgentClient(config, config.Agents.Recaller);
-                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
+                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore, primaryMemoryPath);
             }
 
             if (config.Agents.Saver.Enabled)
             {
                 var saverClient = ClientFactory.CreateAgentClient(config, config.Agents.Saver);
-                memorySaver = new MemorySaver(saverClient, memoryStore);
+                _memorySaver = new MemorySaver(saverClient, memoryStore);
             }
 
             memoryTools = CreateMemoryTools(memoryStore);
@@ -68,7 +78,7 @@ public class MainAgent
         if (config.Agents.Summarizer.Enabled)
         {
             var summarizerClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
-            summarizer = new ConversationSummarizer(summarizerClient);
+            summarizer = new ConversationSummarizer(summarizerClient, primaryMemoryPath);
         }
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
@@ -76,23 +86,28 @@ public class MainAgent
         var reducer = new SlidingWindowChatReducer(
             windowSize: 20,
             systemPrompt: SystemPrompt,
-            memorySaver: memorySaver,
             summarizer: summarizer);
+
+        // 当 MemoryRecaller 未启用但主要记忆文件可能存在时，使用 PrimaryMemoryProvider 作为回退
+        AIContextProvider? contextProvider = memoryRecaller;
+        if (contextProvider is null)
+            contextProvider = new PrimaryMemoryProvider(primaryMemoryPath);
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
             .BuildAIAgent(new ChatClientAgentOptions
             {
-                ChatOptions = new ChatOptions { Tools = tools },
+                ChatOptions = new ChatOptions {
+                    Instructions = SystemPrompt,
+                    Tools = tools
+                },
                 ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(
                     new InMemoryChatHistoryProvider(
                         reducer,
                         ctx.SerializedState,
                         ctx.JsonSerializerOptions,
-                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded)),
-                AIContextProviderFactory = memoryRecaller is not null
-                    ? (ctx, ct) => new ValueTask<AIContextProvider>(memoryRecaller)
-                    : null
+                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval)),
+                AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(contextProvider)
             });
     }
 
@@ -187,9 +202,33 @@ public class MainAgent
         }
         _chatIO.AppendChat("\n");
 
+        // 流式输出完成后，调用 MemorySaver 保存记忆
+        if (_memorySaver is not null)
+        {
+            try
+            {
+                var conversationLog = BuildConversationLog(input, responseBuilder.ToString());
+                await _memorySaver.SaveAsync(conversationLog, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[AutoSave] 记忆保存失败: {ex.Message}");
+            }
+        }
+
         // 持久化会话
         var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));
         File.WriteAllText(_historyPath, serialized);
+    }
+
+    private static List<string> BuildConversationLog(string userInput, string assistantResponse)
+    {
+        var log = new List<string>();
+        if (!string.IsNullOrWhiteSpace(userInput))
+            log.Add($"用户: {userInput}");
+        if (!string.IsNullOrWhiteSpace(assistantResponse))
+            log.Add($"助手: {assistantResponse}");
+        return log;
     }
 
     private static AIFunction[] CreateMemoryTools(IMemoryStore memoryStore)
