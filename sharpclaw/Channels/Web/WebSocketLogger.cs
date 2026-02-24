@@ -1,6 +1,6 @@
 using sharpclaw.Abstractions;
 
-namespace sharpclaw.Web;
+namespace sharpclaw.Channels.Web;
 
 /// <summary>
 /// IAppLogger 的 WebSocket 实现。通过共享的 WebSocketSender 发送。

@@ -1,20 +1,18 @@
-﻿using Microsoft.Extensions.AI;
-using System;
-using System.Collections.Generic;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using System.ComponentModel;
 using System.Text;
 
-using sharpclaw.Chat;
 using sharpclaw.Memory;
 using sharpclaw.UI;
 
 namespace sharpclaw.Agents;
 
 /// <summary>
-/// 记忆回忆器：使用回忆智能体通过工具调用来管理记忆注入。
-/// 支持增量更新：智能体可以选择保留/移除已注入的记忆，并搜索新记忆。
+/// 记忆回忆器：作为 AIContextProvider，在每次智能体调用前自动注入相关记忆。
+/// 使用回忆智能体通过工具调用来管理记忆的增量更新。
 /// </summary>
-public class MemoryRecaller
+public class MemoryRecaller : AIContextProvider
 {
     private static readonly string RecallAgentPrompt = """
         你是一个记忆注入助手。根据当前对话内容和已注入的记忆，决定如何更新注入给主智能体的记忆。
@@ -38,10 +36,12 @@ public class MemoryRecaller
     private readonly IMemoryStore _memoryStore;
 
     private List<MemoryEntry> _currentMemories = [];
+    private readonly List<ChatMessage> _conversationHistory = [];
 
     public int MaxMemories { get; set; } = 10;
 
     public MemoryRecaller(IChatClient baseClient, IMemoryStore memoryStore)
+        : base("MemoryRecaller")
     {
         _client = new ChatClientBuilder(baseClient)
             .UseFunctionInvocation()
@@ -49,16 +49,18 @@ public class MemoryRecaller
         _memoryStore = memoryStore;
     }
 
-    public async Task<ChatMessage?> RecallAsync(
-        string userInput,
-        IReadOnlyList<string>? conversationLog = null,
-        CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> InvokingCoreAsync(
+        AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
+        // 提取用户输入
+        var userMessage = context.RequestMessages.LastOrDefault(m => m.Role == ChatRole.User);
+        var userInput = userMessage?.Text ?? "";
+
         var memoryCount = await _memoryStore.CountAsync(cancellationToken);
         if (memoryCount == 0 && _currentMemories.Count == 0)
         {
             AppLogger.Log("[AutoRecall] 记忆库为空，跳过");
-            return null;
+            return new AIContext();
         }
 
         // ── 工具闭包状态 ──
@@ -72,7 +74,7 @@ public class MemoryRecaller
             [Description("要保留的记忆编号列表，如 [1, 3]。传空数组 [] 表示全部移除")] int[] indices)
         {
             keepCalled = true;
-            keepIndices = indices.Select(i => i - 1).ToList(); // 1-indexed → 0-indexed
+            keepIndices = indices.Select(i => i - 1).ToList();
             var kept = indices.Length == 0 ? "无" : string.Join(",", indices);
             AppLogger.Log($"[AutoRecall] 保留记忆: {kept}");
             return $"已记录，保留 {indices.Length} 条记忆";
@@ -99,17 +101,19 @@ public class MemoryRecaller
             return sb.ToString();
         }
 
-        // ── 构建输入 ──
-        var sb2 = new StringBuilder();
-        sb2.AppendLine("## 当前对话内容");
-        if (conversationLog is { Count: > 0 })
+        // ── 构建回忆智能体输入 ──
+        AppLogger.SetStatus("记忆回忆中...");
+        var recallMessages = new List<ChatMessage>
         {
-            foreach (var line in conversationLog)
-                sb2.AppendLine(line);
-        }
-        sb2.AppendLine($"用户: {userInput}");
-        sb2.AppendLine();
+            new(ChatRole.System, RecallAgentPrompt),
+        };
 
+        foreach (var msg in _conversationHistory)
+            recallMessages.Add(new ChatMessage(msg.Role, msg.Text));
+
+        var sb2 = new StringBuilder();
+        sb2.AppendLine(userInput);
+        sb2.AppendLine();
         if (_currentMemories.Count > 0)
         {
             sb2.AppendLine("## 当前已注入的记忆");
@@ -123,15 +127,11 @@ public class MemoryRecaller
         {
             sb2.AppendLine("## 当前无已注入记忆");
         }
-
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.System, RecallAgentPrompt),
-            new(ChatRole.User, sb2.ToString())
-        };
+        recallMessages.Add(new ChatMessage(ChatRole.User, sb2.ToString()));
 
         var options = new ChatOptions
         {
+            Instructions = RecallAgentPrompt,
             Tools =
             [
                 AIFunctionFactory.Create(KeepMemories),
@@ -139,15 +139,18 @@ public class MemoryRecaller
             ]
         };
 
-        await _client.GetResponseAsync(messages, options, cancellationToken);
+        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new Microsoft.Agents.AI.ChatClientAgentOptions()
+        {
+            ChatOptions = options
+        });
+
+        await agent.RunAsync(recallMessages, cancellationToken: cancellationToken);
 
         // ── 处理结果 ──
-
-        // 保留的旧记忆
         List<MemoryEntry> keptMemories;
         if (!keepCalled)
         {
-            keptMemories = new List<MemoryEntry>(_currentMemories); // 默认全部保留
+            keptMemories = new List<MemoryEntry>(_currentMemories);
         }
         else if (keepIndices is null or [])
         {
@@ -163,7 +166,6 @@ public class MemoryRecaller
 
         AppLogger.Log($"[AutoRecall] 保留 {keptMemories.Count}/{_currentMemories.Count} 条旧记忆");
 
-        // 合并：保留的 + 新搜索的（排除已保留的，按重要度排序，限制总数）
         var keptIds = new HashSet<string>(keptMemories.Select(m => m.Id));
         var remaining = MaxMemories - keptMemories.Count;
         var topNew = searchedMemories
@@ -177,17 +179,42 @@ public class MemoryRecaller
         if (_currentMemories.Count == 0)
         {
             AppLogger.Log("[AutoRecall] 无记忆需要注入");
-            return null;
+            return new AIContext();
         }
 
         AppLogger.Log($"[AutoRecall] 最终注入 {_currentMemories.Count} 条记忆（保留{keptMemories.Count} + 新增{topNew.Count}）：");
         foreach (var m in _currentMemories)
             AppLogger.Log($"  - [{m.Category}] {m.Content}");
 
-        return FormatMemoryMessage(_currentMemories);
+        return new AIContext { Instructions = FormatMemoryInstructions(_currentMemories) };
     }
 
-    private static ChatMessage FormatMemoryMessage(IReadOnlyList<MemoryEntry> memories)
+    protected override ValueTask InvokedCoreAsync(
+        AIContextProvider.InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        if (context.InvokeException is not null)
+            return default;
+
+        // 记录对话历史供下次回忆使用
+        foreach (var msg in context.RequestMessages)
+        {
+            if (msg.Role == ChatRole.User && !string.IsNullOrEmpty(msg.Text))
+                _conversationHistory.Add(new ChatMessage(ChatRole.User, msg.Text));
+        }
+
+        if (context.ResponseMessages is not null)
+        {
+            foreach (var msg in context.ResponseMessages)
+            {
+                if (msg.Role == ChatRole.Assistant && !string.IsNullOrEmpty(msg.Text))
+                    _conversationHistory.Add(new ChatMessage(ChatRole.Assistant, msg.Text));
+            }
+        }
+
+        return default;
+    }
+
+    private static string FormatMemoryInstructions(IReadOnlyList<MemoryEntry> memories)
     {
         var sb = new StringBuilder();
         sb.AppendLine("[长期记忆] 以下是从记忆库中自动检索到的相关信息，请在回复时自然地参考：");
@@ -197,10 +224,7 @@ public class MemoryRecaller
             var age = FormatAge(m.CreatedAt);
             sb.AppendLine($"- [{m.Category}](重要度:{m.Importance}, {age}) {m.Content}");
         }
-
-        var msg = new ChatMessage(ChatRole.System, sb.ToString());
-        (msg.AdditionalProperties ??= [])[SlidingWindowChatReducer.AutoMemoryKey] = "true";
-        return msg;
+        return sb.ToString();
     }
 
     private static string FormatAge(DateTimeOffset created)

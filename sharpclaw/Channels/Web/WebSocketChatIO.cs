@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using sharpclaw.Abstractions;
 
-namespace sharpclaw.Web;
+namespace sharpclaw.Channels.Web;
 
 /// <summary>
 /// IChatIO 的 WebSocket 实现。
@@ -107,6 +107,16 @@ public sealed class WebSocketChatIO : IChatIO, IAsyncDisposable
         _sender.Send(new { type = "chatLine", text });
     }
 
+    public void EchoUserInput(string input)
+    {
+        _sender.Send(new { type = "chatLine", text = $"> {input}\n" });
+    }
+
+    public void BeginAiResponse()
+    {
+        _sender.Send(new { type = "chat", text = "AI: " });
+    }
+
     public void ShowRunning()
     {
         _sender.Send(new { type = "state", state = "running" });
@@ -124,6 +134,28 @@ public sealed class WebSocketChatIO : IChatIO, IAsyncDisposable
         if (Ws.State == WebSocketState.Open)
         {
             _ = Ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "stopped", CancellationToken.None);
+        }
+    }
+
+    public Task<CommandResult> HandleCommandAsync(string input)
+    {
+        switch (input)
+        {
+            case "/exit" or "/quit":
+                RequestStop();
+                return Task.FromResult(CommandResult.Exit);
+
+            case "/help":
+                AppendChatLine("""
+                    可用指令:
+                      /help - 显示帮助
+                      /exit - 断开连接
+
+                    """);
+                return Task.FromResult(CommandResult.Handled);
+
+            default:
+                return Task.FromResult(input.StartsWith('/') ? CommandResult.Handled : CommandResult.NotACommand);
         }
     }
 

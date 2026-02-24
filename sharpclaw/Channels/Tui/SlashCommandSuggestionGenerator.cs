@@ -1,7 +1,7 @@
 using System.Text;
 using Terminal.Gui.Views;
 
-namespace sharpclaw.UI;
+namespace sharpclaw.Channels.Tui;
 
 /// <summary>
 /// 斜杠指令补全生成器：输入 / 开头时弹出指令提示。

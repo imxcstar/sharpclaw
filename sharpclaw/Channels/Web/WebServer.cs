@@ -1,12 +1,12 @@
 using System.Net.WebSockets;
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.FileProviders;
 using sharpclaw.Core;
 using sharpclaw.UI;
 
-namespace sharpclaw.Web;
+namespace sharpclaw.Channels.Web;
 
 /// <summary>
 /// ASP.NET Core WebSocket 服务主机。
@@ -21,35 +21,34 @@ public static class WebServer
             return;
         }
 
-        var port = 5000;
+        var bootstrap = AgentBootstrap.Initialize();
+
+        // 端口优先级：命令行参数 > 配置文件 > 默认值
+        var address = bootstrap.Config.Channels.Web.ListenAddress;
+        var port = bootstrap.Config.Channels.Web.Port;
+        var addrIdx = Array.IndexOf(args, "--address");
+        if (addrIdx >= 0 && addrIdx + 1 < args.Length)
+            address = args[addrIdx + 1];
         var portIdx = Array.IndexOf(args, "--port");
         if (portIdx >= 0 && portIdx + 1 < args.Length && int.TryParse(args[portIdx + 1], out var p))
             port = p;
-
-        var bootstrap = AgentBootstrap.Initialize();
 
         if (bootstrap.MemoryStore is null)
             Console.WriteLine("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");
 
         var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+        builder.WebHost.UseUrls($"http://{address}:{port}");
 
         var app = builder.Build();
         app.UseWebSockets();
 
-        // 静态文件托管 wwwroot/
-        var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-        if (Directory.Exists(wwwroot))
+        // 从嵌入资源提供 index.html
+        var indexHtml = LoadEmbeddedResource("index.html");
+        app.MapGet("/", (HttpContext ctx) =>
         {
-            app.UseDefaultFiles(new DefaultFilesOptions
-            {
-                FileProvider = new PhysicalFileProvider(wwwroot)
-            });
-            app.UseStaticFiles(new StaticFileOptions
-            {
-                FileProvider = new PhysicalFileProvider(wwwroot)
-            });
-        }
+            ctx.Response.ContentType = "text/html; charset=utf-8";
+            return ctx.Response.WriteAsync(indexHtml);
+        });
 
         // 用信号量限制单客户端
         var semaphore = new SemaphoreSlim(1, 1);
@@ -114,9 +113,17 @@ public static class WebServer
             semaphore.Release();
         });
 
-        Console.WriteLine($"Sharpclaw WebSocket 服务已启动: http://localhost:{port}");
+        Console.WriteLine($"Sharpclaw WebSocket 服务已启动: http://{address}:{port}");
         Console.WriteLine("按 Ctrl+C 停止");
 
         await app.RunAsync();
+    }
+
+    private static string LoadEmbeddedResource(string name)
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
+            ?? throw new FileNotFoundException($"嵌入资源 '{name}' 未找到");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }

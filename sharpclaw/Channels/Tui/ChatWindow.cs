@@ -1,16 +1,20 @@
+using sharpclaw.UI;
 using sharpclaw.Abstractions;
+using sharpclaw.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
-namespace sharpclaw.UI;
+namespace sharpclaw.Channels.Tui;
 
 /// <summary>
 /// 主聊天窗口：上方对话区、下方日志区、底部输入框/运行状态。
 /// </summary>
 public sealed class ChatWindow : Runnable, IChatIO
 {
+    private readonly FrameView _chatFrame;
+    private readonly FrameView _logFrame;
     private readonly TextView _chatView;
     private readonly TextView _logView;
     private readonly TextField _inputField;
@@ -21,25 +25,30 @@ public sealed class ChatWindow : Runnable, IChatIO
     private TaskCompletionSource<string>? _inputTcs;
     private CancellationTokenSource? _aiCts;
     private readonly TaskCompletionSource _readyTcs = new();
+    private bool _logCollapsed;
+    private readonly TuiChannelConfig _tuiConfig;
 
     /// <summary>
     /// 等待窗口就绪（App 已绑定）。
     /// </summary>
     public Task WaitForReadyAsync() => _readyTcs.Task;
 
-    public ChatWindow()
+    public ChatWindow(TuiChannelConfig? tuiConfig = null)
     {
-        Application.QuitKey = Key.Q.WithCtrl;
+        _tuiConfig = tuiConfig ?? new TuiChannelConfig();
+        _logCollapsed = _tuiConfig.LogCollapsed;
+
+        Application.QuitKey = ParseKey(_tuiConfig.QuitKey) ?? Key.Q.WithCtrl;
         Title = $"Sharpclaw ({Application.QuitKey} 退出)";
 
         // ── 对话区 ──
-        var chatFrame = new FrameView
+        _chatFrame = new FrameView
         {
             Title = "对话",
             X = 0,
             Y = 0,
             Width = Dim.Fill(),
-            Height = Dim.Percent(60),
+            Height = _logCollapsed ? Dim.Fill(1) : Dim.Percent(60),
         };
 
         _chatView = new TextView
@@ -52,16 +61,17 @@ public sealed class ChatWindow : Runnable, IChatIO
             WordWrap = true,
             Text = "",
         };
-        chatFrame.Add(_chatView);
+        _chatFrame.Add(_chatView);
 
         // ── 日志区 ──
-        var logFrame = new FrameView
+        _logFrame = new FrameView
         {
             Title = "日志",
             X = 0,
-            Y = Pos.Bottom(chatFrame),
+            Y = Pos.Bottom(_chatFrame),
             Width = Dim.Fill(),
             Height = Dim.Fill(1),
+            Visible = !_logCollapsed,
         };
 
         _logView = new TextView
@@ -74,7 +84,7 @@ public sealed class ChatWindow : Runnable, IChatIO
             WordWrap = true,
             Text = "",
         };
-        logFrame.Add(_logView);
+        _logFrame.Add(_logView);
 
         // ── 输入区 ──
         _inputLabel = new Label
@@ -91,7 +101,7 @@ public sealed class ChatWindow : Runnable, IChatIO
             Width = Dim.Fill(),
         };
         _inputField.Autocomplete.SuggestionGenerator = new SlashCommandSuggestionGenerator(
-            ["/exit", "/quit"]);
+            ["/exit", "/quit", "/config", "/help"]);
         _inputField.Autocomplete.SelectionKey = Key.Tab;
         _inputField.Accepting += OnInputAccepting;
 
@@ -112,7 +122,7 @@ public sealed class ChatWindow : Runnable, IChatIO
             Visible = false,
         };
 
-        Add(chatFrame, logFrame, _inputLabel, _inputField, _spinner, _statusLabel);
+        Add(_chatFrame, _logFrame, _inputLabel, _inputField, _spinner, _statusLabel);
 
         // 初始化 TerminalGuiLogger 并绑定到全局 AppLogger
         AppLogger.SetInstance(new TerminalGuiLogger(_logView, _statusLabel));
@@ -146,6 +156,16 @@ public sealed class ChatWindow : Runnable, IChatIO
 
         return _inputTcs.Task;
     }
+
+    /// <summary>
+    /// 回显用户输入，带 "> " 前缀。
+    /// </summary>
+    public void EchoUserInput(string input) => AppendChatLine($"> {input}\n");
+
+    /// <summary>
+    /// 开始 AI 回复，显示 "AI: " 前缀。
+    /// </summary>
+    public void BeginAiResponse() => AppendChat("AI: ");
 
     /// <summary>
     /// 追加对话文本（流式输出用）。
@@ -214,16 +234,83 @@ public sealed class ChatWindow : Runnable, IChatIO
         App?.Invoke(() => base.RequestStop());
     }
 
+    public async Task<CommandResult> HandleCommandAsync(string input)
+    {
+        switch (input)
+        {
+            case "/exit" or "/quit":
+                ((IChatIO)this).RequestStop();
+                return CommandResult.Exit;
+
+            case "/config":
+                var saved = await ShowConfigAsync();
+                if (saved)
+                    AppendChatLine("配置已保存，重启后生效。\n");
+                return CommandResult.Handled;
+
+            case "/help":
+                AppendChatLine($"""
+                    可用指令:
+                      /help   - 显示帮助
+                      /config - 打开配置界面
+                      /exit   - 退出程序
+                    快捷键:
+                      {_tuiConfig.ToggleLogKey}  - 收起/展开日志
+                      {_tuiConfig.QuitKey}  - 退出程序
+                      {_tuiConfig.CancelKey}     - 取消 AI 运行
+
+                    """);
+                return CommandResult.Handled;
+
+            default:
+                return input.StartsWith('/') ? CommandResult.Handled : CommandResult.NotACommand;
+        }
+    }
+
+    /// <summary>
+    /// 在 TUI 中弹出配置对话框，完成后返回聊天界面。
+    /// </summary>
+    private Task<bool> ShowConfigAsync()
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        App!.Invoke(() =>
+        {
+            var configDialog = new ConfigDialog();
+            if (SharpclawConfig.Exists())
+                configDialog.LoadFrom(SharpclawConfig.Load());
+            App!.Run(configDialog);
+            var saved = configDialog.Saved;
+            configDialog.Dispose();
+            tcs.SetResult(saved);
+        });
+        return tcs.Task;
+    }
+
     protected override bool OnKeyDown(Key key)
     {
-        if (key == Key.Esc && _aiCts is { IsCancellationRequested: false })
+        var cancelKey = ParseKey(_tuiConfig.CancelKey) ?? Key.Esc;
+        if (key == cancelKey && _aiCts is { IsCancellationRequested: false })
         {
             _aiCts.Cancel();
             AppLogger.Log("[用户] 已取消 AI 运行");
             return true;
         }
 
+        var toggleLogKey = ParseKey(_tuiConfig.ToggleLogKey) ?? Key.L.WithCtrl;
+        if (key == toggleLogKey)
+        {
+            ToggleLog();
+            return true;
+        }
+
         return base.OnKeyDown(key);
+    }
+
+    private void ToggleLog()
+    {
+        _logCollapsed = !_logCollapsed;
+        _logFrame.Visible = !_logCollapsed;
+        _chatFrame.Height = _logCollapsed ? Dim.Fill(1) : Dim.Percent(60);
     }
 
     private void OnInputAccepting(object? sender, CommandEventArgs e)
@@ -236,5 +323,63 @@ public sealed class ChatWindow : Runnable, IChatIO
         _inputField.Enabled = false;
 
         _inputTcs?.TrySetResult(text);
+    }
+
+    /// <summary>
+    /// 解析快捷键字符串（如 "Ctrl+Q"、"Esc"、"Ctrl+L"）为 Terminal.Gui Key。
+    /// </summary>
+    private static Key? ParseKey(string keyStr)
+    {
+        if (string.IsNullOrWhiteSpace(keyStr))
+            return null;
+
+        var parts = keyStr.Split('+', StringSplitOptions.TrimEntries);
+        var ctrl = false;
+        var alt = false;
+        var shift = false;
+        string? keyPart = null;
+
+        foreach (var part in parts)
+        {
+            switch (part.ToLowerInvariant())
+            {
+                case "ctrl": ctrl = true; break;
+                case "alt": alt = true; break;
+                case "shift": shift = true; break;
+                default: keyPart = part; break;
+            }
+        }
+
+        if (keyPart is null)
+            return null;
+
+        Key? key = keyPart.ToLowerInvariant() switch
+        {
+            "esc" or "escape" => Key.Esc,
+            "enter" or "return" => Key.Enter,
+            "tab" => Key.Tab,
+            "space" => Key.Space,
+            "backspace" => Key.Backspace,
+            "delete" or "del" => Key.Delete,
+            "up" => Key.CursorUp,
+            "down" => Key.CursorDown,
+            "left" => Key.CursorLeft,
+            "right" => Key.CursorRight,
+            "f1" => Key.F1, "f2" => Key.F2, "f3" => Key.F3, "f4" => Key.F4,
+            "f5" => Key.F5, "f6" => Key.F6, "f7" => Key.F7, "f8" => Key.F8,
+            "f9" => Key.F9, "f10" => Key.F10, "f11" => Key.F11, "f12" => Key.F12,
+            _ when keyPart.Length == 1 && char.IsLetterOrDigit(keyPart[0]) =>
+                (Key)char.ToLower(keyPart[0]),
+            _ => null,
+        };
+
+        if (key is not { } k)
+            return null;
+
+        if (ctrl) k = k.WithCtrl;
+        if (alt) k = k.WithAlt;
+        if (shift) k = k.WithShift;
+
+        return k;
     }
 }

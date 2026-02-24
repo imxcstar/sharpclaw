@@ -26,7 +26,6 @@ public class MainAgent
         """;
 
     private readonly ChatClientAgent _agent;
-    private readonly MemoryRecaller? _memoryRecaller;
     private readonly IChatIO _chatIO;
     private readonly string _historyPath;
     private AgentSession? _session;
@@ -45,6 +44,7 @@ public class MainAgent
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
 
         MemorySaver? memorySaver = null;
+        MemoryRecaller? memoryRecaller = null;
         AIFunction[] memoryTools = [];
 
         if (memoryStore is not null)
@@ -52,7 +52,7 @@ public class MainAgent
             if (config.Agents.Recaller.Enabled)
             {
                 var recallerClient = ClientFactory.CreateAgentClient(config, config.Agents.Recaller);
-                _memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
+                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
             }
 
             if (config.Agents.Saver.Enabled)
@@ -89,7 +89,10 @@ public class MainAgent
                         reducer,
                         ctx.SerializedState,
                         ctx.JsonSerializerOptions,
-                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded))
+                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded)),
+                AIContextProviderFactory = memoryRecaller is not null
+                    ? (ctx, ct) => new ValueTask<AIContextProvider>(memoryRecaller)
+                    : null
             });
     }
 
@@ -113,11 +116,11 @@ public class MainAgent
                 if (string.IsNullOrEmpty(input))
                     continue;
 
-                if (input is "/exit" or "/quit")
-                {
-                    _chatIO.RequestStop();
+                var cmdResult = await _chatIO.HandleCommandAsync(input);
+                if (cmdResult == CommandResult.Exit)
                     break;
-                }
+                if (cmdResult == CommandResult.Handled)
+                    continue;
 
                 await ProcessTurnAsync(input, cancellationToken);
             }
@@ -134,39 +137,22 @@ public class MainAgent
 
     private async Task ProcessTurnAsync(string input, CancellationToken cancellationToken)
     {
-        _chatIO.AppendChatLine($"> {input}\n");
+        _chatIO.EchoUserInput(input);
         _chatIO.ShowRunning();
 
         using var aiCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, _chatIO.GetAiCancellationToken());
         var aiToken = aiCts.Token;
 
-        // 记忆回忆
-        AppLogger.SetStatus("记忆回忆中...");
-        var inputMessages = new List<ChatMessage>();
-        if (_memoryRecaller is not null)
+        var inputMessages = new List<ChatMessage>
         {
-            try
-            {
-                var memoryMsg = await _memoryRecaller.RecallAsync(input, cancellationToken: aiToken);
-                if (memoryMsg is not null)
-                    inputMessages.Add(memoryMsg);
-            }
-            catch (OperationCanceledException)
-            {
-                _chatIO.AppendChat("\n[已取消]\n");
-                return;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[AutoRecall] 回忆失败: {ex.Message}");
-            }
-        }
-        inputMessages.Add(new ChatMessage(ChatRole.User, input));
+            new(ChatRole.User, input)
+        };
 
         // 流式输出
         AppLogger.SetStatus("AI 思考中...");
-        _chatIO.AppendChat("AI: ");
+        _chatIO.BeginAiResponse();
+        var responseBuilder = new StringBuilder();
         try
         {
             await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(aiToken))
@@ -177,6 +163,7 @@ public class MainAgent
                     {
                         case TextContent text:
                             _chatIO.AppendChat(text.Text);
+                            responseBuilder.Append(text.Text);
                             break;
                         case TextReasoningContent reasoning:
                             AppLogger.Log($"[Reasoning] {reasoning.Text}");

@@ -1,7 +1,7 @@
 using sharpclaw.Abstractions;
 using Terminal.Gui.Views;
 
-namespace sharpclaw.UI;
+namespace sharpclaw.Channels.Tui;
 
 /// <summary>
 /// Terminal.Gui 实现的日志和状态更新。

@@ -66,18 +66,17 @@ public class MemorySaver
     }
 
     public async Task SaveAsync(
-        string userInput,
         IReadOnlyList<string> conversationLog,
         CancellationToken cancellationToken = default)
     {
-        if (conversationLog.Count == 0 && string.IsNullOrWhiteSpace(userInput))
+        if (conversationLog.Count == 0)
             return;
 
         AppLogger.SetStatus("记忆保存中...");
         // 拼接完整对话原文，供正则提取
-        var fullText = string.Join("\n", conversationLog) + "\n" + userInput;
+        var fullText = string.Join("\n", conversationLog);
 
-        var recentText = string.Join(" ", conversationLog.TakeLast(4)) + " " + userInput;
+        var recentText = string.Join(" ", conversationLog.TakeLast(4));
         var relatedMemories = await _memoryStore.SearchAsync(
             recentText, SearchCount, cancellationToken);
 
@@ -152,7 +151,6 @@ public class MemorySaver
         sb.AppendLine("## 最近对话内容");
         foreach (var line in conversationLog)
             sb.AppendLine(line);
-        sb.AppendLine($"用户: {userInput}");
         sb.AppendLine();
 
         if (relatedMemories.Count > 0)
@@ -169,14 +167,9 @@ public class MemorySaver
             sb.AppendLine("## 无相关已有记忆");
         }
 
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.System, AgentPrompt),
-            new(ChatRole.User, sb.ToString())
-        };
-
         var options = new ChatOptions
         {
+            Instructions = AgentPrompt,
             Tools =
             [
                 AIFunctionFactory.Create(SaveMemory),
@@ -185,8 +178,13 @@ public class MemorySaver
             ]
         };
 
-        var response = await _client.GetResponseAsync(messages, options, cancellationToken);
-        AppLogger.Log($"[AutoSave] 完成: {response.Text}");
+        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new Microsoft.Agents.AI.ChatClientAgentOptions()
+        {
+            ChatOptions = options
+        });
+
+        var ret = await agent.RunAsync(new ChatMessage(ChatRole.User, sb.ToString()), cancellationToken: cancellationToken);
+        AppLogger.Log($"[AutoSave] 完成: {ret.Text}");
     }
 
     /// <summary>

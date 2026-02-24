@@ -1,3 +1,4 @@
+using System.Drawing;
 using sharpclaw.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -46,6 +47,25 @@ public sealed class ConfigDialog : Dialog
     private readonly TextField _rerankModelField;
     private readonly List<View> _embeddingViews = [];
     private readonly List<View> _rerankViews = [];
+
+    // TUI 配置
+    private readonly CheckBox _tuiLogCollapsedCheck;
+    private readonly TextField _tuiQuitKeyField;
+    private readonly TextField _tuiToggleLogKeyField;
+    private readonly TextField _tuiCancelKeyField;
+
+    // QQ Bot 配置
+    private readonly CheckBox _qqBotEnabledCheck;
+    private readonly TextField _qqBotAppIdField;
+    private readonly TextField _qqBotClientSecretField;
+    private readonly CheckBox _qqBotSandboxCheck;
+    private readonly List<View> _qqBotViews = [];
+
+    // Web 服务配置
+    private readonly CheckBox _webEnabledCheck;
+    private readonly TextField _webListenAddressField;
+    private readonly TextField _webPortField;
+    private readonly List<View> _webViews = [];
 
     public bool Saved { get; private set; }
 
@@ -153,6 +173,91 @@ public sealed class ConfigDialog : Dialog
 
         tabView.AddTab(CreateTab(tabView, "向量记忆", memoryView), false);
 
+        // ── 渠道配置 Tab ──
+        var channelsView = new View
+        {
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            CanFocus = true,
+            BorderStyle = Terminal.Gui.Drawing.LineStyle.Single,
+        };
+        y = 1;
+
+        // TUI
+        var tuiTitle = new Label { Text = "── TUI 终端 ──", X = 1, Y = y };
+        channelsView.Add(tuiTitle);
+        y += 1;
+
+        _tuiLogCollapsedCheck = new CheckBox { Text = "默认收起日志区", X = 1, Y = y, Value = CheckState.UnChecked };
+        channelsView.Add(_tuiLogCollapsedCheck);
+        y += 2;
+
+        var tuiQuitKeyLabel = new Label { Text = "退出键:", X = 1, Y = y };
+        _tuiQuitKeyField = new TextField { X = 14, Y = y, Width = 20, Text = "Ctrl+Q" };
+        channelsView.Add(tuiQuitKeyLabel, _tuiQuitKeyField);
+        y += 2;
+
+        var tuiToggleLogLabel = new Label { Text = "日志切换:", X = 1, Y = y };
+        _tuiToggleLogKeyField = new TextField { X = 14, Y = y, Width = 20, Text = "Ctrl+L" };
+        channelsView.Add(tuiToggleLogLabel, _tuiToggleLogKeyField);
+        y += 2;
+
+        var tuiCancelLabel = new Label { Text = "取消键:", X = 1, Y = y };
+        _tuiCancelKeyField = new TextField { X = 14, Y = y, Width = 20, Text = "Esc" };
+        channelsView.Add(tuiCancelLabel, _tuiCancelKeyField);
+        y += 2;
+
+        // Web 服务
+        var webTitle = new Label { Text = "── Web 服务 ──", X = 1, Y = y };
+        channelsView.Add(webTitle);
+        y += 1;
+
+        _webEnabledCheck = new CheckBox { Text = "启用 Web 服务", X = 1, Y = y, Value = CheckState.Checked };
+        _webEnabledCheck.ValueChanged += OnWebEnabledChanged;
+        channelsView.Add(_webEnabledCheck);
+        y += 2;
+
+        var webAddressLabel = new Label { Text = "监听地址:", X = 1, Y = y };
+        _webListenAddressField = new TextField { X = 14, Y = y, Width = 20, Text = "localhost" };
+        _webViews.AddRange([webAddressLabel, _webListenAddressField]);
+        y += 2;
+
+        var webPortLabel = new Label { Text = "端口:", X = 1, Y = y };
+        _webPortField = new TextField { X = 14, Y = y, Width = 10, Text = "5000" };
+        _webViews.AddRange([webPortLabel, _webPortField]);
+        foreach (var v in _webViews) channelsView.Add(v);
+        y += 2;
+
+        // QQ Bot
+        var qqTitle = new Label { Text = "── QQ Bot ──", X = 1, Y = y };
+        channelsView.Add(qqTitle);
+        y += 1;
+
+        _qqBotEnabledCheck = new CheckBox { Text = "启用 QQ Bot", X = 1, Y = y, Value = CheckState.UnChecked };
+        _qqBotEnabledCheck.ValueChanged += OnQQBotEnabledChanged;
+        channelsView.Add(_qqBotEnabledCheck);
+        y += 2;
+
+        var qqAppIdLabel = new Label { Text = "AppId:", X = 1, Y = y };
+        _qqBotAppIdField = new TextField { X = 14, Y = y, Width = Dim.Fill(2) };
+        _qqBotViews.AddRange([qqAppIdLabel, _qqBotAppIdField]);
+        y += 2;
+
+        var qqSecretLabel = new Label { Text = "Secret:", X = 1, Y = y };
+        _qqBotClientSecretField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Secret = true };
+        _qqBotViews.AddRange([qqSecretLabel, _qqBotClientSecretField]);
+        y += 2;
+
+        _qqBotSandboxCheck = new CheckBox { Text = "沙箱模式", X = 1, Y = y, Value = CheckState.UnChecked };
+        _qqBotViews.Add(_qqBotSandboxCheck);
+        y += 1;
+
+        foreach (var v in _qqBotViews) channelsView.Add(v);
+
+        EnableVerticalScroll(channelsView, y);
+
+        tabView.AddTab(CreateTab(tabView, "渠道配置", channelsView), false);
+
         // ── 按钮 ──
         var saveButton = new Button { Text = "保存", IsDefault = true };
         saveButton.Accepting += OnSave;
@@ -171,6 +276,8 @@ public sealed class ConfigDialog : Dialog
 
         // 初始化记忆字段可见性
         OnMemoryEnabledChanged(null, null!);
+        OnWebEnabledChanged(null, null!);
+        OnQQBotEnabledChanged(null, null!);
     }
 
     /// <summary>
@@ -201,7 +308,26 @@ public sealed class ConfigDialog : Dialog
         _rerankApiKeyField.Text = config.Memory.RerankApiKey;
         _rerankModelField.Text = config.Memory.RerankModel;
 
+        // QQ Bot
+        _qqBotEnabledCheck.Value = config.Channels.QQBot.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _qqBotAppIdField.Text = config.Channels.QQBot.AppId;
+        _qqBotClientSecretField.Text = config.Channels.QQBot.ClientSecret;
+        _qqBotSandboxCheck.Value = config.Channels.QQBot.Sandbox ? CheckState.Checked : CheckState.UnChecked;
+
+        // Web 服务
+        _webEnabledCheck.Value = config.Channels.Web.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _webListenAddressField.Text = config.Channels.Web.ListenAddress;
+        _webPortField.Text = config.Channels.Web.Port.ToString();
+
+        // TUI
+        _tuiLogCollapsedCheck.Value = config.Channels.Tui.LogCollapsed ? CheckState.Checked : CheckState.UnChecked;
+        _tuiQuitKeyField.Text = config.Channels.Tui.QuitKey;
+        _tuiToggleLogKeyField.Text = config.Channels.Tui.ToggleLogKey;
+        _tuiCancelKeyField.Text = config.Channels.Tui.CancelKey;
+
         OnMemoryEnabledChanged(null, null!);
+        OnWebEnabledChanged(null, null!);
+        OnQQBotEnabledChanged(null, null!);
     }
 
     private void OnDefaultProviderChanged(object? sender, ValueChangedEventArgs<int?> e)
@@ -224,6 +350,18 @@ public sealed class ConfigDialog : Dialog
     {
         var enabled = _rerankEnabledCheck.Value == CheckState.Checked;
         foreach (var v in _rerankViews) v.Visible = enabled;
+    }
+
+    private void OnQQBotEnabledChanged(object? sender, ValueChangedEventArgs<CheckState> e)
+    {
+        var enabled = _qqBotEnabledCheck.Value == CheckState.Checked;
+        foreach (var v in _qqBotViews) v.Visible = enabled;
+    }
+
+    private void OnWebEnabledChanged(object? sender, ValueChangedEventArgs<CheckState> e)
+    {
+        var enabled = _webEnabledCheck.Value == CheckState.Checked;
+        foreach (var v in _webViews) v.Visible = enabled;
     }
 
     private void OnSave(object? sender, CommandEventArgs e)
@@ -265,6 +403,29 @@ public sealed class ConfigDialog : Dialog
                 RerankEndpoint = memoryEnabled && rerankEnabled ? _rerankEndpointField.Text ?? "" : "",
                 RerankApiKey = memoryEnabled && rerankEnabled ? _rerankApiKeyField.Text ?? "" : "",
                 RerankModel = memoryEnabled && rerankEnabled ? _rerankModelField.Text ?? "" : "",
+            },
+            Channels = new ChannelsConfig
+            {
+                Tui = new TuiChannelConfig
+                {
+                    LogCollapsed = _tuiLogCollapsedCheck.Value == CheckState.Checked,
+                    QuitKey = _tuiQuitKeyField.Text ?? "Ctrl+Q",
+                    ToggleLogKey = _tuiToggleLogKeyField.Text ?? "Ctrl+L",
+                    CancelKey = _tuiCancelKeyField.Text ?? "Esc",
+                },
+                Web = new WebChannelConfig
+                {
+                    Enabled = _webEnabledCheck.Value == CheckState.Checked,
+                    ListenAddress = _webListenAddressField.Text ?? "localhost",
+                    Port = int.TryParse(_webPortField.Text, out var webPort) ? webPort : 5000,
+                },
+                QQBot = new QQBotChannelConfig
+                {
+                    Enabled = _qqBotEnabledCheck.Value == CheckState.Checked,
+                    AppId = _qqBotAppIdField.Text ?? "",
+                    ClientSecret = _qqBotClientSecretField.Text ?? "",
+                    Sandbox = _qqBotSandboxCheck.Value == CheckState.Checked,
+                }
             }
         };
 
@@ -412,5 +573,36 @@ public sealed class ConfigDialog : Dialog
             }
         };
         return tab;
+    }
+
+    /// <summary>
+    /// 为 View 启用垂直滚动：设置内容高度、显示滚动条、焦点自动跟随。
+    /// </summary>
+    private static void EnableVerticalScroll(View view, int contentHeight)
+    {
+        view.Initialized += (_, _) =>
+        {
+            view.SetContentSize(new Size(view.GetContentSize().Width, contentHeight));
+            view.VerticalScrollBar.Visible = true;
+
+            foreach (var sub in view.SubViews)
+            {
+                sub.HasFocusChanged += (s, args) =>
+                {
+                    if (!args.NewValue || s is not View focused)
+                        return;
+
+                    var vy = view.Viewport.Y;
+                    var vh = view.Viewport.Height;
+                    var fy = focused.Frame.Y;
+                    var fh = focused.Frame.Height;
+
+                    if (fy < vy)
+                        view.Viewport = view.Viewport with { Y = fy };
+                    else if (fy + fh > vy + vh)
+                        view.Viewport = view.Viewport with { Y = fy + fh - vh };
+                };
+            }
+        };
     }
 }
