@@ -15,15 +15,16 @@
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
 
 /* 顶栏 */
-.header { padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-.header h1 { font-size: 16px; font-weight: 600; }
-.conn-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+.header { padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 12px; flex-shrink: 0; }
+.header-left { display: flex; flex-direction: column; gap: 2px; }
+.header-left h1 { font-size: 16px; font-weight: 600; }
+.header-status { font-size: 12px; color: var(--yellow); min-height: 16px; }
+.header-status::before { content: ''; }
+.header-status:not(:empty)::before { content: '⟳ '; display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.conn-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-left: auto; align-self: center; }
 .conn-status.connected { background: #9ece6a33; color: var(--green); }
 .conn-status.disconnected { background: #f7768e33; color: var(--red); }
-.status-text { font-size: 12px; color: var(--yellow); margin-left: auto; }
-.status-text::before { content: ''; }
-.status-text:not(:empty)::before { content: '⟳ '; display: inline-block; animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 /* 主体 */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -57,9 +58,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
 .btn-send:disabled { opacity: 0.4; cursor: default; }
 .btn-cancel { background: var(--red); color: #fff; display: none; }
 .btn-cancel:hover { opacity: 0.9; }
-.running-status { display: none; padding: 6px 0; font-size: 13px; color: var(--yellow); }
-.running-status .spinner { display: inline-block; animation: spin 1s linear infinite; margin-right: 6px; }
-.running-status.active { display: flex; align-items: center; }
 
 /* 日志区 */
 .log-toggle { padding: 4px 16px; background: var(--surface); border-top: 1px solid var(--border); cursor: pointer; font-size: 12px; color: var(--text-dim); flex-shrink: 0; user-select: none; }
@@ -74,9 +72,11 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
 <body>
 
 <div class="header">
-    <h1>Sharpclaw</h1>
+    <div class="header-left">
+        <h1>Sharpclaw</h1>
+        <span id="statusText" class="header-status"></span>
+    </div>
     <span id="connStatus" class="conn-status disconnected">未连接</span>
-    <span id="statusText" class="status-text"></span>
 </div>
 
 <div class="main">
@@ -88,10 +88,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
         <input id="inputField" type="text" placeholder="输入消息..." autofocus>
         <button id="btnSend" class="btn btn-send">发送</button>
         <button id="btnCancel" class="btn btn-cancel">取消</button>
-    </div>
-    <div id="runningStatus" class="running-status">
-        <span class="spinner">⟳</span>
-        <span id="runningText">AI 思考中...</span>
     </div>
 </div>
 
@@ -110,8 +106,6 @@ const statusText = document.getElementById('statusText');
 const logToggle = document.getElementById('logToggle');
 const logArea = document.getElementById('logArea');
 const logContent = document.getElementById('logContent');
-const runningStatus = document.getElementById('runningStatus');
-const runningText = document.getElementById('runningText');
 
 let ws = null;
 let currentAiMsg = null; // 当前正在流式输出的 AI 消息元素
@@ -185,7 +179,6 @@ function handleMessage(msg) {
 
         case 'status':
             statusText.textContent = msg.text;
-            runningText.textContent = msg.text;
             break;
     }
 }
@@ -216,11 +209,9 @@ function setInputState(enabled) {
     btnSend.disabled = !enabled;
     btnCancel.style.display = enabled ? 'none' : 'inline-block';
     btnSend.style.display = enabled ? 'inline-block' : 'none';
-    runningStatus.className = enabled ? 'running-status' : 'running-status active';
     if (enabled) {
         inputField.focus();
         statusText.textContent = '';
-        runningText.textContent = '';
     }
 }
 
