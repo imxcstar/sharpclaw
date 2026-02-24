@@ -169,14 +169,9 @@ public class MemorySaver
             sb.AppendLine("## 无相关已有记忆");
         }
 
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.System, AgentPrompt),
-            new(ChatRole.User, sb.ToString())
-        };
-
         var options = new ChatOptions
         {
+            Instructions = AgentPrompt,
             Tools =
             [
                 AIFunctionFactory.Create(SaveMemory),
@@ -185,8 +180,13 @@ public class MemorySaver
             ]
         };
 
-        var response = await _client.GetResponseAsync(messages, options, cancellationToken);
-        AppLogger.Log($"[AutoSave] 完成: {response.Text}");
+        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new Microsoft.Agents.AI.ChatClientAgentOptions()
+        {
+            ChatOptions = options
+        });
+
+        var ret = await agent.RunAsync(new ChatMessage(ChatRole.User, sb.ToString()), cancellationToken: cancellationToken);
+        AppLogger.Log($"[AutoSave] 完成: {ret.Text}");
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
-using System.Text;
+using Microsoft.Extensions.Options;
 using sharpclaw.UI;
+using System.Text;
 
 namespace sharpclaw.Agents;
 
@@ -73,14 +74,10 @@ public class ConversationSummarizer
         sb.AppendLine("## 本次被裁剪的对话内容");
         sb.Append(trimmedText);
 
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.System, SummarizerPrompt),
-            new(ChatRole.User, sb.ToString())
-        };
+        var agent = _client.AsAIAgent(SummarizerPrompt);
 
-        var response = await _client.GetResponseAsync(messages, cancellationToken: cancellationToken);
-        _currentSummary = response.Text?.Trim() ?? "";
+        var ret = await agent.RunAsync(new ChatMessage(ChatRole.User, sb.ToString()), cancellationToken: cancellationToken);
+        _currentSummary = ret.Text?.Trim() ?? "";
 
         AppLogger.Log($"[AutoSummary] 已更新摘要（{_currentSummary.Length}字）");
 
