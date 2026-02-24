@@ -63,6 +63,7 @@ public sealed class ConfigDialog : Dialog
 
     // Web 服务配置
     private readonly CheckBox _webEnabledCheck;
+    private readonly TextField _webListenAddressField;
     private readonly TextField _webPortField;
     private readonly List<View> _webViews = [];
 
@@ -216,6 +217,11 @@ public sealed class ConfigDialog : Dialog
         channelsView.Add(_webEnabledCheck);
         y += 2;
 
+        var webAddressLabel = new Label { Text = "监听地址:", X = 1, Y = y };
+        _webListenAddressField = new TextField { X = 14, Y = y, Width = 20, Text = "localhost" };
+        _webViews.AddRange([webAddressLabel, _webListenAddressField]);
+        y += 2;
+
         var webPortLabel = new Label { Text = "端口:", X = 1, Y = y };
         _webPortField = new TextField { X = 14, Y = y, Width = 10, Text = "5000" };
         _webViews.AddRange([webPortLabel, _webPortField]);
@@ -310,6 +316,7 @@ public sealed class ConfigDialog : Dialog
 
         // Web 服务
         _webEnabledCheck.Value = config.Channels.Web.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _webListenAddressField.Text = config.Channels.Web.ListenAddress;
         _webPortField.Text = config.Channels.Web.Port.ToString();
 
         // TUI
@@ -409,6 +416,7 @@ public sealed class ConfigDialog : Dialog
                 Web = new WebChannelConfig
                 {
                     Enabled = _webEnabledCheck.Value == CheckState.Checked,
+                    ListenAddress = _webListenAddressField.Text ?? "localhost",
                     Port = int.TryParse(_webPortField.Text, out var webPort) ? webPort : 5000,
                 },
                 QQBot = new QQBotChannelConfig

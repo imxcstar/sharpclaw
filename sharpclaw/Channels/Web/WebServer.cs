@@ -24,7 +24,11 @@ public static class WebServer
         var bootstrap = AgentBootstrap.Initialize();
 
         // 端口优先级：命令行参数 > 配置文件 > 默认值
+        var address = bootstrap.Config.Channels.Web.ListenAddress;
         var port = bootstrap.Config.Channels.Web.Port;
+        var addrIdx = Array.IndexOf(args, "--address");
+        if (addrIdx >= 0 && addrIdx + 1 < args.Length)
+            address = args[addrIdx + 1];
         var portIdx = Array.IndexOf(args, "--port");
         if (portIdx >= 0 && portIdx + 1 < args.Length && int.TryParse(args[portIdx + 1], out var p))
             port = p;
@@ -33,7 +37,7 @@ public static class WebServer
             Console.WriteLine("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");
 
         var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+        builder.WebHost.UseUrls($"http://{address}:{port}");
 
         var app = builder.Build();
         app.UseWebSockets();
@@ -109,7 +113,7 @@ public static class WebServer
             semaphore.Release();
         });
 
-        Console.WriteLine($"Sharpclaw WebSocket 服务已启动: http://localhost:{port}");
+        Console.WriteLine($"Sharpclaw WebSocket 服务已启动: http://{address}:{port}");
         Console.WriteLine("按 Ctrl+C 停止");
 
         await app.RunAsync();

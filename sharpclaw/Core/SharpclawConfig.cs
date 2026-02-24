@@ -9,7 +9,7 @@ public class SharpclawConfig
     /// <summary>
     /// 当前配置版本。每次结构变更时递增，用于自动迁移。
     /// </summary>
-    public const int CurrentVersion = 7;
+    public const int CurrentVersion = 8;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -162,6 +162,7 @@ public class TuiChannelConfig
 public class WebChannelConfig
 {
     public bool Enabled { get; set; } = true;
+    public string ListenAddress { get; set; } = "localhost";
     public int Port { get; set; } = 5000;
 }
 
@@ -299,6 +300,16 @@ public static class ConfigMigrator
                     ["toggleLogKey"] = "Ctrl+L",
                     ["cancelKey"] = "Esc",
                 };
+            }
+        },
+
+        // v7 → v8: Web 渠道新增 listenAddress
+        [8] = json =>
+        {
+            var web = json["channels"]?["web"]?.AsObject();
+            if (web is not null && !web.ContainsKey("listenAddress"))
+            {
+                web["listenAddress"] = "localhost";
             }
         },
     };

@@ -9,7 +9,7 @@ var command = args.Length > 0 ? args[0].ToLowerInvariant() : "";
 
 switch (command)
 {
-    case "serve":
+    case "web":
         KeyStore.PasswordPrompt = ConsolePasswordPrompt;
         await sharpclaw.Channels.Web.WebServer.RunAsync(args);
         return;
@@ -44,11 +44,11 @@ static void PrintHelp()
         用法: sharpclaw <命令> [选项]
 
         命令:
-          tui                 启动 TUI 终端界面
-          serve [--port N]    启动 Web 服务（默认端口 5000）
-          qqbot               启动 QQ Bot 服务
-          config              打开配置界面
-          help                显示帮助信息
+          tui                              启动 TUI 终端界面
+          web [--address ADDR] [--port N]  启动 Web 服务
+          qqbot                            启动 QQ Bot 服务
+          config                           打开配置界面
+          help                             显示帮助信息
         """);
 }
 
