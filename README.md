@@ -15,9 +15,10 @@ A .NET 10 AI agent with long-term memory and system operation tools. Supports An
 - **Vector semantic search** — Two-phase retrieval: vector embedding recall + optional reranking
 - **Semantic deduplication** — Automatically merges memories when cosine similarity exceeds threshold, avoiding redundancy
 - **System tools** — File operations, process execution (dotnet/node/docker), HTTP requests, background task management
-- **Dual frontend** — TUI terminal interface (Terminal.Gui v2) + WebSocket web interface, sharing the same agent logic
-- **Slash commands** — Type `/` to trigger autocomplete, supports `/exit`, `/quit` and more
+- **Multi-channel architecture** — TUI terminal interface (Terminal.Gui v2) + WebSocket web interface + QQ Bot, all sharing the same agent logic via `IChatIO` abstraction
+- **Slash commands** — Type `/` to trigger autocomplete, supports `/exit`, `/quit`, `/config`, `/help`
 - **Streaming output** — Real-time streaming AI responses with reasoning logs and tool call tracing
+- **Configurable keybindings** — TUI quit key, log toggle key, and cancel key are all configurable
 - **Config data encryption** — Sensitive data like API keys are encrypted with AES-256-CBC, with encryption keys stored in the OS credential manager (Windows Credential Manager / macOS Keychain / Linux libsecret)
 
 ## Requirements
@@ -29,27 +30,44 @@ A .NET 10 AI agent with long-term memory and system operation tools. Supports An
 ### TUI Mode (Terminal Interface)
 
 ```bash
-dotnet run --project sharpclaw
+dotnet run --project sharpclaw tui
 ```
 
 First run automatically launches the configuration wizard. Select your AI provider, enter API keys, and configure per-agent settings.
 
 ![Config Dialog](preview/config.png)
 
-Config is saved to `~/.sharpclaw/config.json`. After that, launching goes straight to interactive chat. Type `/exit` or `/quit` to exit, `Ctrl+Q` to quit.
+Config is saved to `~/.sharpclaw/config.json`. After that, launching goes straight to interactive chat. Type `/exit` or `/quit` to exit, `Ctrl+Q` to quit (default, configurable).
 
 ### Web Mode (WebSocket Server)
 
 ```bash
-dotnet run --project sharpclaw serve
-dotnet run --project sharpclaw serve --port 8080
+dotnet run --project sharpclaw web
+dotnet run --project sharpclaw web --address 0.0.0.0 --port 8080
 ```
 
-Visit `http://localhost:5000` (default port) to open the web chat interface. The Web UI supports Markdown rendering, code highlighting, connection status indicators, and real-time status display.
+Visit `http://localhost:5000` (default) to open the web chat interface. The Web UI supports Markdown rendering, code highlighting, connection status indicators, and real-time status display.
 
 ![Web Chat Interface](preview/web.png)
 
 > Note: Web mode requires completing configuration via TUI mode first. Only one client connection is supported at a time.
+
+### QQ Bot Mode
+
+```bash
+dotnet run --project sharpclaw qqbot
+```
+
+Runs as a QQ Bot service, receiving messages from QQ channels, groups, and private chats. Requires QQ Bot AppId and ClientSecret configured in the config file.
+
+> Note: QQ Bot mode requires completing configuration via TUI mode first and enabling QQ Bot in the channels config.
+
+### Other Commands
+
+```bash
+dotnet run --project sharpclaw config    # Open config dialog
+dotnet run --project sharpclaw help      # Show usage info
+```
 
 ## Configuration
 
@@ -63,7 +81,7 @@ Config file structure (`~/.sharpclaw/config.json`):
 
 ```json
 {
-  "version": 4,
+  "version": 8,
   "default": {
     "provider": "anthropic",
     "endpoint": "https://api.anthropic.com",
@@ -85,11 +103,30 @@ Config file structure (`~/.sharpclaw/config.json`):
     "rerankEndpoint": "https://dashscope.aliyuncs.com/compatible-api/v1/reranks",
     "rerankApiKey": "sk-xxx",
     "rerankModel": "qwen3-vl-rerank"
+  },
+  "channels": {
+    "tui": {
+      "logCollapsed": false,
+      "quitKey": "Ctrl+Q",
+      "toggleLogKey": "Ctrl+L",
+      "cancelKey": "Esc"
+    },
+    "web": {
+      "enabled": true,
+      "listenAddress": "localhost",
+      "port": 5000
+    },
+    "qqBot": {
+      "enabled": false,
+      "appId": "",
+      "clientSecret": "",
+      "sandbox": false
+    }
   }
 }
 ```
 
-Each agent inherits from `default` unless overridden. Set `"enabled": false` to disable a sub-agent.
+Each agent inherits from `default` unless overridden. Set `"enabled": false` to disable a sub-agent. Channel settings configure per-frontend behavior.
 
 ## Memory Pipeline
 
@@ -113,15 +150,28 @@ User Input
 
 ```
 sharpclaw/
-├── Program.cs                  # Entry point: TUI / Web mode dispatch
+├── Program.cs                  # Entry point: command dispatch (tui/web/qqbot/config/help)
 ├── Abstractions/               # Interface definitions
-│   ├── IChatIO.cs              # Frontend I/O abstraction (shared by TUI and WebSocket)
+│   ├── IChatIO.cs              # Frontend I/O abstraction (shared by all channels)
 │   └── IAppLogger.cs           # Logger abstraction
 ├── Agents/                     # Agents
 │   ├── MainAgent.cs            # Main agent: conversation loop, streaming, tool calls
 │   ├── MemoryRecaller.cs       # Memory recall: incremental injection of relevant memories
 │   ├── MemorySaver.cs          # Memory save: analyze conversation, auto save/update/delete
 │   └── ConversationSummarizer.cs # Conversation summarizer: incremental summary of trimmed content
+├── Channels/                   # Multi-channel frontends
+│   ├── Tui/                    # TUI frontend (Terminal.Gui v2)
+│   │   ├── ChatWindow.cs       # Main chat window (chat + log + input areas)
+│   │   ├── SlashCommandSuggestionGenerator.cs # Slash command autocomplete
+│   │   └── TerminalGuiLogger.cs # TUI logger implementation
+│   ├── Web/                    # WebSocket frontend (ASP.NET Core)
+│   │   ├── WebServer.cs        # ASP.NET Core host with embedded index.html
+│   │   ├── WebSocketChatIO.cs  # WebSocket IChatIO implementation
+│   │   ├── WebSocketSender.cs  # WebSocket message sender
+│   │   └── WebSocketLogger.cs  # WebSocket logger implementation
+│   └── QQBot/                  # QQ Bot frontend
+│       ├── QQBotServer.cs      # QQ Bot service host (channel/group/C2C messages)
+│       └── QQBotChatIO.cs      # QQ Bot IChatIO implementation
 ├── Chat/
 │   └── SlidingWindowChatReducer.cs # Sliding window reducer with integrated memory pipeline
 ├── Clients/
@@ -133,11 +183,11 @@ sharpclaw/
 │   ├── SystemCommands.cs       # System info, exit
 │   └── TaskCommands.cs         # Background task management
 ├── Core/
-│   ├── AgentBootstrap.cs       # Shared initialization logic
+│   ├── AgentBootstrap.cs       # Shared initialization logic (all channels)
 │   ├── ClientFactory.cs        # Multi-provider AI client factory
 │   ├── DataProtector.cs        # AES-256-CBC encryption/decryption
 │   ├── KeyStore.cs             # OS credential manager key storage
-│   ├── SharpclawConfig.cs      # Config management (version migration, encryption)
+│   ├── SharpclawConfig.cs      # Config management (schema, version migration, encryption)
 │   ├── Serialization/          # JSON serialization
 │   └── TaskManagement/         # Background tasks: process tasks, native tasks
 ├── Memory/
@@ -145,23 +195,15 @@ sharpclaw/
 │   ├── MemoryEntry.cs          # Memory entry model
 │   ├── VectorMemoryStore.cs    # Vector memory store (embedding + cosine + dedup + rerank)
 │   └── InMemoryMemoryStore.cs  # In-memory store (for testing)
-├── UI/                         # TUI frontend
-│   ├── ChatWindow.cs           # Main chat window (chat + log + input areas)
-│   ├── ConfigDialog.cs         # Config wizard dialog (TabView pages)
-│   ├── SlashCommandSuggestionGenerator.cs # Slash command autocomplete
-│   ├── AppLogger.cs            # Logger management
-│   └── TerminalGuiLogger.cs    # TUI logger implementation
-├── Web/                        # WebSocket frontend
-│   ├── WebServer.cs            # ASP.NET Core host
-│   ├── WebSocketChatIO.cs      # WebSocket IChatIO implementation
-│   ├── WebSocketSender.cs      # WebSocket message sender
-│   └── WebSocketLogger.cs      # WebSocket logger implementation
+├── UI/                         # Shared UI utilities
+│   ├── AppLogger.cs            # Global logger management
+│   └── ConfigDialog.cs         # Config wizard dialog (TabView pages)
 └── wwwroot/
-    └── index.html              # Web chat interface (single-file SPA)
+    └── index.html              # Web chat interface (single-file SPA, embedded resource)
 ```
 
 ## Data Persistence
 
-- `~/.sharpclaw/config.json` — Provider and agent configuration
+- `~/.sharpclaw/config.json` — Provider, agent, and channel configuration
 - `history.json` — Session state, auto-restored on startup
 - `memories.json` — Vector memory store

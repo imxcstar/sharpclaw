@@ -6,21 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 dotnet build
-dotnet run --project sharpclaw            # TUI mode (Terminal.Gui)
-dotnet run --project sharpclaw config     # Re-run config dialog
-dotnet run --project sharpclaw serve      # Web mode (WebSocket server, default port 5000)
-dotnet run --project sharpclaw serve --port 8080
+dotnet run --project sharpclaw tui                          # TUI mode (Terminal.Gui)
+dotnet run --project sharpclaw config                       # Re-run config dialog
+dotnet run --project sharpclaw web                          # Web mode (WebSocket server)
+dotnet run --project sharpclaw web --address 0.0.0.0 --port 8080
+dotnet run --project sharpclaw qqbot                        # QQ Bot mode
 ```
 
-First run auto-launches the config dialog (Terminal.Gui `ConfigDialog`) which writes `~/.sharpclaw/config.json`. Web mode requires config to exist already.
+First run of `tui` auto-launches the config dialog (Terminal.Gui `ConfigDialog`) which writes `~/.sharpclaw/config.json`. Web and QQ Bot modes require config to exist already. Running with no command (or `help`) prints usage info.
 
 No test project exists. Target framework is .NET 10 (`net10.0`).
 
 ## Configuration
 
-All settings live in `~/.sharpclaw/config.json`. Supports three providers: Anthropic, OpenAI, Gemini. Each sub-agent (main, recaller, saver, summarizer) can override the default provider/endpoint/model or inherit from `default`.
+All settings live in `~/.sharpclaw/config.json`. Supports three providers: Anthropic, OpenAI, Gemini. Each sub-agent (main, recaller, saver, summarizer) can override the default provider/endpoint/model or inherit from `default`. A `channels` section configures per-frontend settings (TUI, Web listen address/port, QQ Bot credentials).
 
-API keys are encrypted at rest with AES-256-CBC (`DataProtector`). The encryption key is stored in the OS credential manager via `KeyStore` (Windows Credential Manager / macOS Keychain / Linux libsecret).
+API keys are encrypted at rest with AES-256-CBC (`DataProtector`). The encryption key is stored in the OS credential manager via `KeyStore` (Windows Credential Manager / macOS Keychain / Linux libsecret). Config has auto-migration (current version 8, see `ConfigMigrator`).
 
 See `Core/SharpclawConfig.cs` for the schema and `Core/ClientFactory.cs` for client instantiation.
 
@@ -28,20 +29,25 @@ See `Core/SharpclawConfig.cs` for the schema and `Core/ClientFactory.cs` for cli
 
 Sharpclaw is a console/web AI agent with long-term memory, built on `Microsoft.Agents.AI` and `Microsoft.Extensions.AI`.
 
-### Dual Frontend via IChatIO
+### Multi-Channel Frontend via IChatIO
 
-The AI engine is decoupled from the frontend through `Abstractions/IChatIO.cs`. Two implementations exist:
-- `UI/ChatWindow.cs` — TUI frontend using Terminal.Gui v2 (chat area + log area + input field)
-- `Web/WebSocketChatIO.cs` — WebSocket frontend, served by `Web/WebServer.cs` (ASP.NET Core), single-client only
+The AI engine is decoupled from the frontend through `Abstractions/IChatIO.cs`. Three implementations exist under `Channels/`:
+- `Channels/Tui/ChatWindow.cs` — TUI frontend using Terminal.Gui v2 (chat area + log area + input field)
+- `Channels/Web/WebSocketChatIO.cs` — WebSocket frontend, served by `Channels/Web/WebServer.cs` (ASP.NET Core), single-client only
+- `Channels/QQBot/QQBotChatIO.cs` — QQ Bot frontend via `Luolan.QQBot`, served by `Channels/QQBot/QQBotServer.cs`
 
-Both frontends share the same agent logic. `Abstractions/IAppLogger.cs` + `AppLogger` provide a similar abstraction for logging.
+All frontends share the same agent logic. `Abstractions/IAppLogger.cs` + `AppLogger` provide a similar abstraction for logging.
 
 ### Entry Point (`Program.cs`)
 
-1. `args.Contains("serve")` → dispatches to `WebServer.RunAsync()` (web mode)
-2. Otherwise → Terminal.Gui init → `ConfigDialog` if config missing → `AgentBootstrap.Initialize()` → `ChatWindow` + `MainAgent` → TUI event loop
+`switch` on the first CLI arg:
+1. `tui` → Terminal.Gui init → `ConfigDialog` if config missing → `AgentBootstrap.Initialize()` → `ChatWindow` + `MainAgent` → TUI event loop
+2. `web` → dispatches to `WebServer.RunAsync()` (WebSocket server)
+3. `qqbot` → dispatches to `QQBotServer.RunAsync()` (QQ Bot service)
+4. `config` → opens `ConfigDialog` only
+5. Default / `help` → prints usage info
 
-`Core/AgentBootstrap.Initialize()` is the shared bootstrap used by both TUI and Web mode: loads config, creates `TaskManager`, registers all command tools as `AIFunction[]`, creates `IMemoryStore`.
+`Core/AgentBootstrap.Initialize()` is the shared bootstrap used by all channels: loads config, creates `TaskManager`, registers all command tools as `AIFunction[]`, creates `IMemoryStore`.
 
 ### MainAgent and Memory Pipeline
 
