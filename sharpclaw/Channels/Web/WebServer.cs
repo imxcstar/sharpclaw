@@ -6,7 +6,7 @@ using Microsoft.Extensions.FileProviders;
 using sharpclaw.Core;
 using sharpclaw.UI;
 
-namespace sharpclaw.Web;
+namespace sharpclaw.Channels.Web;
 
 /// <summary>
 /// ASP.NET Core WebSocket 服务主机。
@@ -21,12 +21,13 @@ public static class WebServer
             return;
         }
 
-        var port = 5000;
+        var bootstrap = AgentBootstrap.Initialize();
+
+        // 端口优先级：命令行参数 > 配置文件 > 默认值
+        var port = bootstrap.Config.Channels.Web.Port;
         var portIdx = Array.IndexOf(args, "--port");
         if (portIdx >= 0 && portIdx + 1 < args.Length && int.TryParse(args[portIdx + 1], out var p))
             port = p;
-
-        var bootstrap = AgentBootstrap.Initialize();
 
         if (bootstrap.MemoryStore is null)
             Console.WriteLine("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");

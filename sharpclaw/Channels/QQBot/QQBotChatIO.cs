@@ -5,7 +5,7 @@ using Luolan.QQBot.Models;
 using sharpclaw.Abstractions;
 using Channel = System.Threading.Channels.Channel;
 
-namespace sharpclaw.QQBot;
+namespace sharpclaw.Channels.QQBot;
 
 /// <summary>
 /// IChatIO 的 QQ Bot 实现。

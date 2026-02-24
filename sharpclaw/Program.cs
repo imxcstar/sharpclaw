@@ -1,3 +1,4 @@
+using sharpclaw.Channels.Tui;
 using sharpclaw.Core;
 using sharpclaw.UI;
 using Terminal.Gui.App;
@@ -5,13 +6,13 @@ using Terminal.Gui.App;
 // ── 模式选择 ──
 if (args.Contains("serve"))
 {
-    await sharpclaw.Web.WebServer.RunAsync(args);
+    await sharpclaw.Channels.Web.WebServer.RunAsync(args);
     return;
 }
 
 if (args.Contains("qqbot"))
 {
-    await sharpclaw.QQBot.QQBotServer.RunAsync(args);
+    await sharpclaw.Channels.QQBot.QQBotServer.RunAsync(args);
     return;
 }
 

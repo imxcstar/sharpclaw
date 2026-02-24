@@ -1,10 +1,11 @@
+using sharpclaw.UI;
 using sharpclaw.Abstractions;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
-namespace sharpclaw.UI;
+namespace sharpclaw.Channels.Tui;
 
 /// <summary>
 /// 主聊天窗口：上方对话区、下方日志区、底部输入框/运行状态。

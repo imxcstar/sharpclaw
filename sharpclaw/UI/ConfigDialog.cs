@@ -54,6 +54,11 @@ public sealed class ConfigDialog : Dialog
     private readonly CheckBox _qqBotSandboxCheck;
     private readonly List<View> _qqBotViews = [];
 
+    // Web 服务配置
+    private readonly CheckBox _webEnabledCheck;
+    private readonly TextField _webPortField;
+    private readonly List<View> _webViews = [];
+
     public bool Saved { get; private set; }
 
     public ConfigDialog()
@@ -160,12 +165,34 @@ public sealed class ConfigDialog : Dialog
 
         tabView.AddTab(CreateTab(tabView, "向量记忆", memoryView), false);
 
-        // ── QQ Bot Tab ──
-        var qqBotView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
+        // ── 渠道配置 Tab ──
+        var channelsView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
         y = 1;
+
+        // Web 服务
+        var webTitle = new Label { Text = "── Web 服务 ──", X = 1, Y = y };
+        channelsView.Add(webTitle);
+        y += 1;
+
+        _webEnabledCheck = new CheckBox { Text = "启用 Web 服务", X = 1, Y = y, Value = CheckState.Checked };
+        _webEnabledCheck.ValueChanged += OnWebEnabledChanged;
+        channelsView.Add(_webEnabledCheck);
+        y += 2;
+
+        var webPortLabel = new Label { Text = "端口:", X = 1, Y = y };
+        _webPortField = new TextField { X = 14, Y = y, Width = 10, Text = "5000" };
+        _webViews.AddRange([webPortLabel, _webPortField]);
+        foreach (var v in _webViews) channelsView.Add(v);
+        y += 2;
+
+        // QQ Bot
+        var qqTitle = new Label { Text = "── QQ Bot ──", X = 1, Y = y };
+        channelsView.Add(qqTitle);
+        y += 1;
 
         _qqBotEnabledCheck = new CheckBox { Text = "启用 QQ Bot", X = 1, Y = y, Value = CheckState.UnChecked };
         _qqBotEnabledCheck.ValueChanged += OnQQBotEnabledChanged;
+        channelsView.Add(_qqBotEnabledCheck);
         y += 2;
 
         var qqAppIdLabel = new Label { Text = "AppId:", X = 1, Y = y };
@@ -181,10 +208,9 @@ public sealed class ConfigDialog : Dialog
         _qqBotSandboxCheck = new CheckBox { Text = "沙箱模式", X = 1, Y = y, Value = CheckState.UnChecked };
         _qqBotViews.Add(_qqBotSandboxCheck);
 
-        qqBotView.Add(_qqBotEnabledCheck);
-        foreach (var v in _qqBotViews) qqBotView.Add(v);
+        foreach (var v in _qqBotViews) channelsView.Add(v);
 
-        tabView.AddTab(CreateTab(tabView, "QQ Bot", qqBotView), false);
+        tabView.AddTab(CreateTab(tabView, "渠道配置", channelsView), false);
 
         // ── 按钮 ──
         var saveButton = new Button { Text = "保存", IsDefault = true };
@@ -204,6 +230,7 @@ public sealed class ConfigDialog : Dialog
 
         // 初始化记忆字段可见性
         OnMemoryEnabledChanged(null, null!);
+        OnWebEnabledChanged(null, null!);
         OnQQBotEnabledChanged(null, null!);
     }
 
@@ -236,12 +263,17 @@ public sealed class ConfigDialog : Dialog
         _rerankModelField.Text = config.Memory.RerankModel;
 
         // QQ Bot
-        _qqBotEnabledCheck.Value = config.QQBot.Enabled ? CheckState.Checked : CheckState.UnChecked;
-        _qqBotAppIdField.Text = config.QQBot.AppId;
-        _qqBotClientSecretField.Text = config.QQBot.ClientSecret;
-        _qqBotSandboxCheck.Value = config.QQBot.Sandbox ? CheckState.Checked : CheckState.UnChecked;
+        _qqBotEnabledCheck.Value = config.Channels.QQBot.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _qqBotAppIdField.Text = config.Channels.QQBot.AppId;
+        _qqBotClientSecretField.Text = config.Channels.QQBot.ClientSecret;
+        _qqBotSandboxCheck.Value = config.Channels.QQBot.Sandbox ? CheckState.Checked : CheckState.UnChecked;
+
+        // Web 服务
+        _webEnabledCheck.Value = config.Channels.Web.Enabled ? CheckState.Checked : CheckState.UnChecked;
+        _webPortField.Text = config.Channels.Web.Port.ToString();
 
         OnMemoryEnabledChanged(null, null!);
+        OnWebEnabledChanged(null, null!);
         OnQQBotEnabledChanged(null, null!);
     }
 
@@ -271,6 +303,12 @@ public sealed class ConfigDialog : Dialog
     {
         var enabled = _qqBotEnabledCheck.Value == CheckState.Checked;
         foreach (var v in _qqBotViews) v.Visible = enabled;
+    }
+
+    private void OnWebEnabledChanged(object? sender, ValueChangedEventArgs<CheckState> e)
+    {
+        var enabled = _webEnabledCheck.Value == CheckState.Checked;
+        foreach (var v in _webViews) v.Visible = enabled;
     }
 
     private void OnSave(object? sender, CommandEventArgs e)
@@ -313,12 +351,20 @@ public sealed class ConfigDialog : Dialog
                 RerankApiKey = memoryEnabled && rerankEnabled ? _rerankApiKeyField.Text ?? "" : "",
                 RerankModel = memoryEnabled && rerankEnabled ? _rerankModelField.Text ?? "" : "",
             },
-            QQBot = new QQBotConfig
+            Channels = new ChannelsConfig
             {
-                Enabled = _qqBotEnabledCheck.Value == CheckState.Checked,
-                AppId = _qqBotAppIdField.Text ?? "",
-                ClientSecret = _qqBotClientSecretField.Text ?? "",
-                Sandbox = _qqBotSandboxCheck.Value == CheckState.Checked,
+                Web = new WebChannelConfig
+                {
+                    Enabled = _webEnabledCheck.Value == CheckState.Checked,
+                    Port = int.TryParse(_webPortField.Text, out var webPort) ? webPort : 5000,
+                },
+                QQBot = new QQBotChannelConfig
+                {
+                    Enabled = _qqBotEnabledCheck.Value == CheckState.Checked,
+                    AppId = _qqBotAppIdField.Text ?? "",
+                    ClientSecret = _qqBotClientSecretField.Text ?? "",
+                    Sandbox = _qqBotSandboxCheck.Value == CheckState.Checked,
+                }
             }
         };
 

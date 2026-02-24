@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using sharpclaw.Abstractions;
 
-namespace sharpclaw.Web;
+namespace sharpclaw.Channels.Web;
 
 /// <summary>
 /// IChatIO 的 WebSocket 实现。

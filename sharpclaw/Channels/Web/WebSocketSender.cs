@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 
-namespace sharpclaw.Web;
+namespace sharpclaw.Channels.Web;
 
 /// <summary>
 /// 线程安全的 WebSocket JSON 消息发送器。

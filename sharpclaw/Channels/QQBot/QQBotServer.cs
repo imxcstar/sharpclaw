@@ -2,7 +2,7 @@ using Luolan.QQBot;
 using sharpclaw.Core;
 using sharpclaw.UI;
 
-namespace sharpclaw.QQBot;
+namespace sharpclaw.Channels.QQBot;
 
 /// <summary>
 /// QQ Bot 服务主机。接收 QQ 消息并转发给 MainAgent 处理。
@@ -19,13 +19,13 @@ public static class QQBotServer
 
         var bootstrap = AgentBootstrap.Initialize();
 
-        if (!bootstrap.Config.QQBot.Enabled)
+        if (!bootstrap.Config.Channels.QQBot.Enabled)
         {
             Console.WriteLine("[Error] QQ Bot 未启用，请在配置中启用 QQ Bot。");
             return;
         }
 
-        var qqConfig = bootstrap.Config.QQBot;
+        var qqConfig = bootstrap.Config.Channels.QQBot;
         if (string.IsNullOrWhiteSpace(qqConfig.AppId) || string.IsNullOrWhiteSpace(qqConfig.ClientSecret))
         {
             Console.WriteLine("[Error] QQ Bot AppId 或 ClientSecret 未配置。");

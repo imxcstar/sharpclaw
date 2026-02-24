@@ -9,7 +9,7 @@ public class SharpclawConfig
     /// <summary>
     /// 当前配置版本。每次结构变更时递增，用于自动迁移。
     /// </summary>
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,7 +21,7 @@ public class SharpclawConfig
     public DefaultAgentConfig Default { get; set; } = new();
     public AgentsConfig Agents { get; set; } = new();
     public MemoryConfig Memory { get; set; } = new();
-    public QQBotConfig QQBot { get; set; } = new();
+    public ChannelsConfig Channels { get; set; } = new();
 
     public static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -79,7 +79,7 @@ public class SharpclawConfig
         EncryptAgentKey(Agents.Summarizer);
         Memory.EmbeddingApiKey = DataProtector.Encrypt(Memory.EmbeddingApiKey);
         Memory.RerankApiKey = DataProtector.Encrypt(Memory.RerankApiKey);
-        QQBot.ClientSecret = DataProtector.Encrypt(QQBot.ClientSecret);
+        Channels.QQBot.ClientSecret = DataProtector.Encrypt(Channels.QQBot.ClientSecret);
     }
 
     private void DecryptKeys()
@@ -91,7 +91,7 @@ public class SharpclawConfig
         DecryptAgentKey(Agents.Summarizer);
         Memory.EmbeddingApiKey = DataProtector.Decrypt(Memory.EmbeddingApiKey);
         Memory.RerankApiKey = DataProtector.Decrypt(Memory.RerankApiKey);
-        QQBot.ClientSecret = DataProtector.Decrypt(QQBot.ClientSecret);
+        Channels.QQBot.ClientSecret = DataProtector.Decrypt(Channels.QQBot.ClientSecret);
     }
 
     private static void EncryptAgentKey(AgentConfig agent)
@@ -141,7 +141,22 @@ public class AgentsConfig
     public AgentConfig Summarizer { get; set; } = new();
 }
 
-public class QQBotConfig
+/// <summary>
+/// 渠道配置集合。
+/// </summary>
+public class ChannelsConfig
+{
+    public WebChannelConfig Web { get; set; } = new();
+    public QQBotChannelConfig QQBot { get; set; } = new();
+}
+
+public class WebChannelConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int Port { get; set; } = 5000;
+}
+
+public class QQBotChannelConfig
 {
     public bool Enabled { get; set; } = false;
     public string AppId { get; set; } = "";
@@ -228,6 +243,38 @@ public static class ConfigMigrator
                     ["sandbox"] = false,
                 };
             }
+        },
+
+        // v5 → v6: 渠道化配置，qqBot 移入 channels，新增 web
+        [6] = json =>
+        {
+            var channels = new JsonObject
+            {
+                ["web"] = new JsonObject
+                {
+                    ["enabled"] = true,
+                    ["port"] = 5000,
+                },
+            };
+
+            // 将已有的 qqBot 移入 channels
+            if (json["qqBot"] is { } qqBot)
+            {
+                channels["qqBot"] = qqBot.DeepClone();
+                json.Remove("qqBot");
+            }
+            else
+            {
+                channels["qqBot"] = new JsonObject
+                {
+                    ["enabled"] = false,
+                    ["appId"] = "",
+                    ["clientSecret"] = "",
+                    ["sandbox"] = false,
+                };
+            }
+
+            json["channels"] = channels;
         },
     };
 
