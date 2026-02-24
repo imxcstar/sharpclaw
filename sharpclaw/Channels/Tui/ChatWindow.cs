@@ -13,6 +13,8 @@ namespace sharpclaw.Channels.Tui;
 /// </summary>
 public sealed class ChatWindow : Runnable, IChatIO
 {
+    private readonly FrameView _chatFrame;
+    private readonly FrameView _logFrame;
     private readonly TextView _chatView;
     private readonly TextView _logView;
     private readonly TextField _inputField;
@@ -23,6 +25,7 @@ public sealed class ChatWindow : Runnable, IChatIO
     private TaskCompletionSource<string>? _inputTcs;
     private CancellationTokenSource? _aiCts;
     private readonly TaskCompletionSource _readyTcs = new();
+    private bool _logCollapsed;
 
     /// <summary>
     /// 等待窗口就绪（App 已绑定）。
@@ -35,7 +38,7 @@ public sealed class ChatWindow : Runnable, IChatIO
         Title = $"Sharpclaw ({Application.QuitKey} 退出)";
 
         // ── 对话区 ──
-        var chatFrame = new FrameView
+        _chatFrame = new FrameView
         {
             Title = "对话",
             X = 0,
@@ -54,14 +57,14 @@ public sealed class ChatWindow : Runnable, IChatIO
             WordWrap = true,
             Text = "",
         };
-        chatFrame.Add(_chatView);
+        _chatFrame.Add(_chatView);
 
         // ── 日志区 ──
-        var logFrame = new FrameView
+        _logFrame = new FrameView
         {
-            Title = "日志",
+            Title = "日志 (Ctrl+L 收起)",
             X = 0,
-            Y = Pos.Bottom(chatFrame),
+            Y = Pos.Bottom(_chatFrame),
             Width = Dim.Fill(),
             Height = Dim.Fill(1),
         };
@@ -76,7 +79,7 @@ public sealed class ChatWindow : Runnable, IChatIO
             WordWrap = true,
             Text = "",
         };
-        logFrame.Add(_logView);
+        _logFrame.Add(_logView);
 
         // ── 输入区 ──
         _inputLabel = new Label
@@ -114,7 +117,7 @@ public sealed class ChatWindow : Runnable, IChatIO
             Visible = false,
         };
 
-        Add(chatFrame, logFrame, _inputLabel, _inputField, _spinner, _statusLabel);
+        Add(_chatFrame, _logFrame, _inputLabel, _inputField, _spinner, _statusLabel);
 
         // 初始化 TerminalGuiLogger 并绑定到全局 AppLogger
         AppLogger.SetInstance(new TerminalGuiLogger(_logView, _statusLabel));
@@ -254,7 +257,21 @@ public sealed class ChatWindow : Runnable, IChatIO
             return true;
         }
 
+        if (key == Key.L.WithCtrl)
+        {
+            ToggleLog();
+            return true;
+        }
+
         return base.OnKeyDown(key);
+    }
+
+    private void ToggleLog()
+    {
+        _logCollapsed = !_logCollapsed;
+        _logFrame.Visible = !_logCollapsed;
+        _chatFrame.Height = _logCollapsed ? Dim.Fill(1) : Dim.Percent(60);
+        _logFrame.Title = _logCollapsed ? "日志 (Ctrl+L 展开)" : "日志 (Ctrl+L 收起)";
     }
 
     private void OnInputAccepting(object? sender, CommandEventArgs e)
