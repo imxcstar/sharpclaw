@@ -1,3 +1,4 @@
+using System.Drawing;
 using sharpclaw.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -172,7 +173,13 @@ public sealed class ConfigDialog : Dialog
         tabView.AddTab(CreateTab(tabView, "向量记忆", memoryView), false);
 
         // ── 渠道配置 Tab ──
-        var channelsView = new View { Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true, BorderStyle = Terminal.Gui.Drawing.LineStyle.Single };
+        var channelsView = new View
+        {
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            CanFocus = true,
+            BorderStyle = Terminal.Gui.Drawing.LineStyle.Single,
+        };
         y = 1;
 
         // TUI
@@ -237,8 +244,11 @@ public sealed class ConfigDialog : Dialog
 
         _qqBotSandboxCheck = new CheckBox { Text = "沙箱模式", X = 1, Y = y, Value = CheckState.UnChecked };
         _qqBotViews.Add(_qqBotSandboxCheck);
+        y += 1;
 
         foreach (var v in _qqBotViews) channelsView.Add(v);
+
+        EnableVerticalScroll(channelsView, y);
 
         tabView.AddTab(CreateTab(tabView, "渠道配置", channelsView), false);
 
@@ -555,5 +565,36 @@ public sealed class ConfigDialog : Dialog
             }
         };
         return tab;
+    }
+
+    /// <summary>
+    /// 为 View 启用垂直滚动：设置内容高度、显示滚动条、焦点自动跟随。
+    /// </summary>
+    private static void EnableVerticalScroll(View view, int contentHeight)
+    {
+        view.Initialized += (_, _) =>
+        {
+            view.SetContentSize(new Size(view.GetContentSize().Width, contentHeight));
+            view.VerticalScrollBar.Visible = true;
+
+            foreach (var sub in view.SubViews)
+            {
+                sub.HasFocusChanged += (s, args) =>
+                {
+                    if (!args.NewValue || s is not View focused)
+                        return;
+
+                    var vy = view.Viewport.Y;
+                    var vh = view.Viewport.Height;
+                    var fy = focused.Frame.Y;
+                    var fh = focused.Frame.Height;
+
+                    if (fy < vy)
+                        view.Viewport = view.Viewport with { Y = fy };
+                    else if (fy + fh > vy + vh)
+                        view.Viewport = view.Viewport with { Y = fy + fh - vh };
+                };
+            }
+        };
     }
 }
