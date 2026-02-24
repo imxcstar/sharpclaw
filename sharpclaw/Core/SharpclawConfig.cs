@@ -140,7 +140,7 @@ public class AgentsConfig
 
 public class MemoryConfig
 {
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; } = false;
     public string EmbeddingEndpoint { get; set; } = "";
     public string EmbeddingApiKey { get; set; } = "";
     public string EmbeddingModel { get; set; } = "";
