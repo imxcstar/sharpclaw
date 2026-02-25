@@ -6,8 +6,8 @@ using sharpclaw.UI;
 namespace sharpclaw.Chat;
 
 /// <summary>
-/// 滑动窗口聊天裁剪器：集成总结管线。
-/// 流程：剥离旧注入 → 滑动窗口裁剪 → 总结性回忆注入
+/// 滑动窗口聊天裁剪器：集成归档管线。
+/// 流程：剥离旧注入 → 滑动窗口裁剪 → 归档被裁剪的消息
 /// 记忆回忆注入由主循环在输入消息时触发。MemorySaver 由 MainAgent 在流式输出完成后调用。
 /// </summary>
 public class SlidingWindowChatReducer : IChatReducer
@@ -17,7 +17,7 @@ public class SlidingWindowChatReducer : IChatReducer
     private readonly int _windowSize;
     private readonly int _overflowBuffer;
     private readonly string? _systemPrompt;
-    private readonly ConversationSummarizer? _summarizer;
+    private readonly ConversationArchiver? _archiver;
 
     /// <param name="windowSize">裁剪后保留的消息数</param>
     /// <param name="overflowBuffer">超出 windowSize 多少条后才触发裁剪。默认 5。</param>
@@ -25,12 +25,12 @@ public class SlidingWindowChatReducer : IChatReducer
         int windowSize,
         int overflowBuffer = 5,
         string? systemPrompt = null,
-        ConversationSummarizer? summarizer = null)
+        ConversationArchiver? archiver = null)
     {
         _windowSize = windowSize;
         _overflowBuffer = overflowBuffer;
         _systemPrompt = systemPrompt;
-        _summarizer = summarizer;
+        _archiver = archiver;
     }
 
     public async Task<IEnumerable<ChatMessage>> ReduceAsync(
@@ -38,7 +38,7 @@ public class SlidingWindowChatReducer : IChatReducer
     {
         var all = messages.ToList();
 
-        // ── 1. 剥离旧的自动注入消息（记忆 + 摘要）──
+        // ── 1. 剥离旧的自动注入消息（记忆 + 旧版摘要兼容）──
         var systemMessages = new List<ChatMessage>();
         var conversationMessages = new List<ChatMessage>();
 
@@ -46,7 +46,7 @@ public class SlidingWindowChatReducer : IChatReducer
         {
             if (msg.AdditionalProperties?.ContainsKey(AutoMemoryKey) == true)
                 continue;
-            if (msg.AdditionalProperties?.ContainsKey(ConversationSummarizer.AutoSummaryKey) == true)
+            if (msg.AdditionalProperties?.ContainsKey(ConversationArchiver.AutoSummaryKey) == true)
                 continue;
 
             if (msg.Role == ChatRole.System)
@@ -94,23 +94,20 @@ public class SlidingWindowChatReducer : IChatReducer
             conversationMessages = conversationMessages.Skip(cutIndex).ToList();
         }
 
-        // ── 3. 总结性回忆：将被裁剪的内容总结后注入 ──
-        var summaryMessages = new List<ChatMessage>();
-        if (_summarizer is not null && (trimmedMessages.Count > 0 || conversationMessages.Count > 0))
+        // ── 3. 归档被裁剪的消息（提取核心信息到主记忆 + 保存历史文件）──
+        if (_archiver is not null && trimmedMessages.Count > 0)
         {
             try
             {
-                var summaryMsg = await _summarizer.SummarizeAsync(trimmedMessages, conversationMessages, cancellationToken);
-                if (summaryMsg is not null)
-                    summaryMessages.Add(summaryMsg);
+                await _archiver.ArchiveAsync(trimmedMessages, conversationMessages, cancellationToken);
             }
             catch (Exception ex)
             {
-                AppLogger.Log($"[AutoSummary] 总结失败: {ex.Message}");
+                AppLogger.Log($"[Archive] 归档失败: {ex.Message}");
             }
         }
 
-        IEnumerable<ChatMessage> result = [.. systemMessages, .. summaryMessages, .. conversationMessages];
+        IEnumerable<ChatMessage> result = [.. systemMessages, .. conversationMessages];
         return result;
     }
 }

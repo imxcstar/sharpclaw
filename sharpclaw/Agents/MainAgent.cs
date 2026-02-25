@@ -75,11 +75,11 @@ public class MainAgent
             memoryTools = CreateMemoryTools(memoryStore);
         }
 
-        ConversationSummarizer? summarizer = null;
+        ConversationArchiver? archiver = null;
         if (config.Agents.Summarizer.Enabled)
         {
-            var summarizerClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
-            summarizer = new ConversationSummarizer(summarizerClient, primaryMemoryPath);
+            var archiverClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
+            archiver = new ConversationArchiver(archiverClient, primaryMemoryPath);
         }
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
@@ -87,7 +87,7 @@ public class MainAgent
         var reducer = new SlidingWindowChatReducer(
             windowSize: 20,
             systemPrompt: SystemPrompt,
-            summarizer: summarizer);
+            archiver: archiver);
 
         // 当 MemoryRecaller 未启用但主要记忆文件可能存在时，使用 PrimaryMemoryProvider 作为回退
         AIContextProvider? contextProvider = memoryRecaller;
