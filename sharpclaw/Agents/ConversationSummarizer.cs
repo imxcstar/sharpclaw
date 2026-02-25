@@ -3,6 +3,7 @@ using Microsoft.Extensions.AI;
 using sharpclaw.UI;
 using System.ComponentModel;
 using System.Text;
+using System.Text.Json;
 
 namespace sharpclaw.Agents;
 
@@ -21,12 +22,14 @@ public class ConversationSummarizer
         你会收到：
         1. 上一轮的摘要（可能为空，表示首次总结）
         2. 本次被裁剪掉的对话内容（即将从窗口中移除的旧消息）
-        3. 当前主要记忆的内容（已持久化的长期信息）
+        3. 当前保留在窗口中的对话内容（不会被移除，供你参考避免重复）
+        4. 当前主要记忆的内容（已持久化的长期信息）
 
         请生成一份更新后的摘要，要求：
         - 融合上一轮摘要和新裁剪内容中的关键信息
         - 保留重要的事实、决策、用户偏好、待办事项、讨论结论
         - 去除已过时或不再相关的信息
+        - 不要重复保留窗口中已有的内容
         - 摘要应简洁精炼，控制在 300 字以内
         - 使用要点列表格式，便于快速浏览
 
@@ -57,24 +60,51 @@ public class ConversationSummarizer
     /// <summary>
     /// 将被裁剪的消息融合到摘要中。返回注入用的系统消息，无内容时返回 null。
     /// </summary>
+    /// <param name="trimmedMessages">被裁剪掉的消息</param>
+    /// <param name="retainedMessages">保留在窗口中的消息</param>
+    /// <param name="cancellationToken"></param>
     public async Task<ChatMessage?> SummarizeAsync(
         IReadOnlyList<ChatMessage> trimmedMessages,
+        IReadOnlyList<ChatMessage> retainedMessages,
         CancellationToken cancellationToken = default)
     {
         if (trimmedMessages.Count == 0 && _currentSummary.Length == 0)
             return null;
 
         AppLogger.SetStatus("对话总结中...");
-        // 提取被裁剪消息的文本
+        // 提取被裁剪消息的文本（包括工具调用和结果）
         var trimmedText = new StringBuilder();
         foreach (var msg in trimmedMessages)
         {
-            var text = msg.Text?.Trim();
-            if (string.IsNullOrEmpty(text))
-                continue;
+            var parts = new List<string>();
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
+                        parts.Add(text.Text.Trim());
+                        break;
+                    case FunctionCallContent call:
+                        var args = call.Arguments is not null
+                            ? JsonSerializer.Serialize(call.Arguments)
+                            : "";
+                        parts.Add($"[调用工具 {call.Name}({args})]");
+                        break;
+                    case FunctionResultContent result:
+                        var resultText = result.Result?.ToString() ?? "";
+                        if (resultText.Length > 200)
+                            resultText = resultText[..200] + "...";
+                        parts.Add($"[工具结果: {resultText}]");
+                        break;
+                }
+            }
 
-            var role = msg.Role == ChatRole.User ? "用户" : "助手";
-            trimmedText.AppendLine($"{role}: {text}");
+            if (parts.Count == 0) continue;
+
+            var role = msg.Role == ChatRole.User ? "用户"
+                     : msg.Role == ChatRole.Assistant ? "助手"
+                     : "工具";
+            trimmedText.AppendLine($"{role}: {string.Join(" ", parts)}");
         }
 
         // 没有新裁剪内容且已有摘要，直接返回现有摘要
@@ -99,6 +129,44 @@ public class ConversationSummarizer
         sb.AppendLine("## 本次被裁剪的对话内容");
         sb.Append(trimmedText);
         sb.AppendLine();
+
+        // 提取保留消息的文本（供总结助手参考，避免重复）
+        var retainedText = new StringBuilder();
+        foreach (var msg in retainedMessages)
+        {
+            var parts = new List<string>();
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
+                        parts.Add(text.Text.Trim());
+                        break;
+                    case FunctionCallContent call:
+                        parts.Add($"[调用工具 {call.Name}]");
+                        break;
+                    case FunctionResultContent result:
+                        var resultText = result.Result?.ToString() ?? "";
+                        if (resultText.Length > 100)
+                            resultText = resultText[..100] + "...";
+                        parts.Add($"[工具结果: {resultText}]");
+                        break;
+                }
+            }
+            if (parts.Count == 0) continue;
+
+            var role = msg.Role == ChatRole.User ? "用户"
+                     : msg.Role == ChatRole.Assistant ? "助手"
+                     : "工具";
+            retainedText.AppendLine($"{role}: {string.Join(" ", parts)}");
+        }
+        if (retainedText.Length > 0)
+        {
+            sb.AppendLine("## 当前保留在窗口中的对话内容（不要重复这些内容）");
+            sb.Append(retainedText);
+            sb.AppendLine();
+        }
+
         if (!string.IsNullOrWhiteSpace(primaryMemory))
         {
             sb.AppendLine("## 当前主要记忆内容");
@@ -148,11 +216,9 @@ public class ConversationSummarizer
         });
 
         var messages = new List<ChatMessage> { new(ChatRole.User, sb.ToString()) };
-        await agent.RunAsync(messages, cancellationToken: cancellationToken);
+        var ret = await agent.RunAsync(messages, cancellationToken: cancellationToken);
 
-        // 提取最后一条 assistant 文本作为摘要
-        var lastAssistant = messages.LastOrDefault(m => m.Role == ChatRole.Assistant);
-        _currentSummary = lastAssistant?.Text?.Trim() ?? "";
+        _currentSummary = ret?.Text?.Trim() ?? "";
 
         AppLogger.Log($"[AutoSummary] 已更新摘要（{_currentSummary.Length}字）");
 

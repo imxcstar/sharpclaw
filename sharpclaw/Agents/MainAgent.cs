@@ -35,6 +35,7 @@ public class MainAgent
     private readonly IChatIO _chatIO;
     private readonly string _historyPath;
     private readonly MemorySaver? _memorySaver;
+    private InMemoryChatHistoryProvider? _historyProvider;
     private AgentSession? _session;
 
     public MainAgent(
@@ -95,18 +96,20 @@ public class MainAgent
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
+            .UseChatReducer(reducer)
             .BuildAIAgent(new ChatClientAgentOptions
             {
                 ChatOptions = new ChatOptions {
                     Instructions = SystemPrompt,
                     Tools = tools
                 },
-                ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(
-                    new InMemoryChatHistoryProvider(
-                        reducer,
+                ChatHistoryProviderFactory = (ctx, ct) =>
+                {
+                    _historyProvider = new InMemoryChatHistoryProvider(
                         ctx.SerializedState,
-                        ctx.JsonSerializerOptions,
-                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval)),
+                        ctx.JsonSerializerOptions);
+                    return new ValueTask<ChatHistoryProvider>(_historyProvider);
+                },
                 AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(contextProvider)
             });
     }

@@ -85,6 +85,11 @@ public class SlidingWindowChatReducer : IChatReducer
                 }
             }
 
+            // 如果仍然没找到合适的 User 边界（例如工具调用循环中只有一条 User 消息在最前面），
+            // 回退到原始 cutIndex 强制裁剪，避免消息无限增长
+            if (cutIndex <= 0)
+                cutIndex = originalCutIndex;
+
             trimmedMessages = conversationMessages.Take(cutIndex).ToList();
             conversationMessages = conversationMessages.Skip(cutIndex).ToList();
         }
@@ -95,7 +100,7 @@ public class SlidingWindowChatReducer : IChatReducer
         {
             try
             {
-                var summaryMsg = await _summarizer.SummarizeAsync(trimmedMessages, cancellationToken);
+                var summaryMsg = await _summarizer.SummarizeAsync(trimmedMessages, conversationMessages, cancellationToken);
                 if (summaryMsg is not null)
                     summaryMessages.Add(summaryMsg);
             }
