@@ -25,16 +25,48 @@ public class ConversationArchiver
         2. 当前保留在窗口中的对话内容（供你参考上下文，避免提取重复信息）
         3. 当前主要记忆的内容（已持久化的长期信息）
 
-        请分析被裁剪的对话，提取其中的核心信息，然后调用 UpdatePrimaryMemory 工具更新主要记忆。
+        请分析被裁剪的对话，提取其中的核心信息，然后调用 UpdatePrimaryMemory 工具更新主要记忆。bu
 
         提取规则：
         - 提取重要的事实、决策、用户偏好、待办事项、讨论结论
         - 提取用户明确表达的长期有效信息
+        - **重点关注目标信息**：用户正在进行的目标、计划、任务进展（例如"正在开发XX功能"、"计划重构XX模块"），这些是最重要的记忆内容
+        - 如果对话中体现了用户的阶段性目标或长期目标，务必记录，建议在主要记忆中用独立的"当前目标"分区维护
+        - 如果目标已完成，将其从进行中移到已完成或直接移除
         - 不要提取保留窗口中已有的信息（避免重复）
         - 忽略临时性的对话内容（寒暄、确认、临时状态）
         - 忽略工具调用的具体细节（只保留关键结论）
         - 将新提取的信息与已有主要记忆合并，不要丢失已有信息
-        - 使用 Markdown 格式，要点列表，简洁精炼
+        - 使用 Markdown 格式，按以下示例的分区结构组织，简洁精炼
+
+        主要记忆格式示例：
+        ```markdown
+        ## 当前目标
+        - 正在开发电商平台的订单模块，需要支持退款流程
+        - 计划将用户认证从 Session 迁移到 JWT
+
+        ## 待办事项
+        - 订单表需要新增 refund_status 字段
+        - 编写退款 API 的单元测试
+
+        ## 用户偏好
+        - 偏好使用中文交流
+        - 代码风格：简洁，不喜欢过度注释
+        - 常用技术栈：React + Node.js + PostgreSQL
+
+        ## 关键事实
+        - 项目使用 monorepo 结构，前端在 packages/web，后端在 packages/api
+        - 数据库已有 users、orders、products 三张核心表
+        - 部署环境：阿里云 ECS + Docker Compose
+
+        ## 重要决策
+        - API 统一使用 RESTful 风格，不用 GraphQL
+        - 前端状态管理选择了 Zustand 而非 Redux
+
+        ## 讨论结论
+        - 退款流程确定为：用户申请 → 客服审核 → 自动退款到原支付方式
+        - 并发问题决定用乐观锁处理，不用分布式锁
+        ```
 
         如果被裁剪的内容中没有值得保留的核心信息，则不需要调用工具，直接回复"无需更新"。
         """;
@@ -59,19 +91,22 @@ public class ConversationArchiver
     /// <param name="trimmedMessages">被裁剪掉的消息</param>
     /// <param name="retainedMessages">保留在窗口中的消息，供 AI 参考避免提取重复信息</param>
     /// <param name="cancellationToken"></param>
-    public async Task ArchiveAsync(
+    /// <returns>更新后的主要记忆内容，如果没有主要记忆则返回 null</returns>
+    public async Task<string?> ArchiveAsync(
         IReadOnlyList<ChatMessage> trimmedMessages,
         IReadOnlyList<ChatMessage> retainedMessages,
         CancellationToken cancellationToken = default)
     {
         if (trimmedMessages.Count == 0)
-            return;
+            return null;
 
         // 并行执行：保存历史文件 + AI 提取核心信息
         var saveTask = SaveHistoryFileAsync(trimmedMessages, cancellationToken);
         var extractTask = ExtractCoreInfoAsync(trimmedMessages, retainedMessages, cancellationToken);
 
         await Task.WhenAll(saveTask, extractTask);
+
+        return extractTask.Result;
     }
 
     /// <summary>
@@ -136,13 +171,14 @@ public class ConversationArchiver
     /// <summary>
     /// 用 AI 提取被裁剪消息中的核心信息，更新主要记忆。
     /// </summary>
-    private async Task ExtractCoreInfoAsync(
+    /// <returns>更新后的主要记忆内容，如果没有则返回 null</returns>
+    private async Task<string?> ExtractCoreInfoAsync(
         IReadOnlyList<ChatMessage> trimmedMessages,
         IReadOnlyList<ChatMessage> retainedMessages,
         CancellationToken cancellationToken)
     {
         if (_primaryMemoryPath is null)
-            return;
+            return null;
 
         try
         {
@@ -151,15 +187,10 @@ public class ConversationArchiver
             // 提取被裁剪消息的文本
             var trimmedText = FormatMessages(trimmedMessages);
             if (trimmedText.Length == 0)
-                return;
+                return ReadPrimaryMemory();
 
             // 读取当前主要记忆
-            var primaryMemory = "";
-            if (File.Exists(_primaryMemoryPath))
-            {
-                try { primaryMemory = await File.ReadAllTextAsync(_primaryMemoryPath, cancellationToken); }
-                catch { /* ignore */ }
-            }
+            var primaryMemory = ReadPrimaryMemory() ?? "";
 
             var sb = new StringBuilder();
             sb.AppendLine("## 本次被裁剪的对话内容");
@@ -185,6 +216,9 @@ public class ConversationArchiver
                 sb.AppendLine("## 当前无主要记忆");
             }
 
+            // 捕获工具写入的内容
+            string? updatedContent = null;
+
             // UpdatePrimaryMemory 工具
             [Description("更新主要记忆文件。将核心信息（用户偏好、关键事实、重要决策）写入持久化存储。传入完整的新内容（应包含已有内容的合并）。")]
             async Task<string> UpdatePrimaryMemory(
@@ -197,6 +231,7 @@ public class ConversationArchiver
                         Directory.CreateDirectory(dir);
 
                     await File.WriteAllTextAsync(_primaryMemoryPath, content, cancellationToken);
+                    updatedContent = content;
                     AppLogger.Log($"[Archive] 已更新主要记忆（{content.Length}字）");
                     return $"已更新主要记忆（{content.Length}字）";
                 }
@@ -220,14 +255,30 @@ public class ConversationArchiver
 
             var messages = new List<ChatMessage> { new(ChatRole.User, sb.ToString()) };
             await agent.RunAsync(messages, cancellationToken: cancellationToken);
+
+            // 如果工具被调用，返回更新后的内容；否则返回已有的主要记忆
+            return updatedContent ?? (string.IsNullOrWhiteSpace(primaryMemory) ? null : primaryMemory);
         }
         catch (Exception ex)
         {
             AppLogger.Log($"[Archive] 核心信息提取失败: {ex.Message}");
+            return ReadPrimaryMemory();
         }
     }
 
-    private static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int maxResultLength = 200)
+    private string? ReadPrimaryMemory()
+    {
+        if (_primaryMemoryPath is null || !File.Exists(_primaryMemoryPath))
+            return null;
+        try
+        {
+            var content = File.ReadAllText(_primaryMemoryPath);
+            return string.IsNullOrWhiteSpace(content) ? null : content;
+        }
+        catch { return null; }
+    }
+
+    private static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
     {
         var sb = new StringBuilder();
         foreach (var msg in messages)
@@ -248,8 +299,11 @@ public class ConversationArchiver
                         break;
                     case FunctionResultContent result:
                         var resultText = result.Result?.ToString() ?? "";
-                        if (resultText.Length > maxResultLength)
-                            resultText = resultText[..maxResultLength] + "...";
+                        if (maxResultLength.HasValue)
+                        {
+                            if (resultText.Length > maxResultLength)
+                                resultText = resultText[..maxResultLength.Value] + "...";
+                        }
                         parts.Add($"[工具结果: {resultText}]");
                         break;
                 }

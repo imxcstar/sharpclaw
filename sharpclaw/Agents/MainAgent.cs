@@ -43,9 +43,10 @@ public class MainAgent
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
         IChatIO chatIO,
-        string historyPath = "history.json")
+        string? historyPath = null)
     {
-        _historyPath = historyPath;
+        _historyPath = historyPath ?? Path.Combine(
+            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "session.json");
         _chatIO = chatIO;
 
         // 主要记忆文件路径
@@ -89,28 +90,29 @@ public class MainAgent
             systemPrompt: SystemPrompt,
             archiver: archiver);
 
-        // 当 MemoryRecaller 未启用但主要记忆文件可能存在时，使用 PrimaryMemoryProvider 作为回退
-        AIContextProvider? contextProvider = memoryRecaller;
-        if (contextProvider is null)
-            contextProvider = new PrimaryMemoryProvider(primaryMemoryPath);
-
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
             .UseChatReducer(reducer)
             .BuildAIAgent(new ChatClientAgentOptions
             {
-                ChatOptions = new ChatOptions {
+                ChatOptions = new ChatOptions
+                {
                     Instructions = SystemPrompt,
                     Tools = tools
                 },
                 ChatHistoryProviderFactory = (ctx, ct) =>
                 {
                     _historyProvider = new InMemoryChatHistoryProvider(
+                        reducer,
                         ctx.SerializedState,
-                        ctx.JsonSerializerOptions);
+                        ctx.JsonSerializerOptions,
+                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval
+                    );
                     return new ValueTask<ChatHistoryProvider>(_historyProvider);
                 },
-                AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(contextProvider)
+                AIContextProviderFactory = memoryRecaller is not null
+                    ? (ctx, ct) => new ValueTask<AIContextProvider>(memoryRecaller)
+                    : null
             });
     }
 
