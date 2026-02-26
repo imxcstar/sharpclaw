@@ -6,13 +6,13 @@ using sharpclaw.UI;
 namespace sharpclaw.Chat;
 
 /// <summary>
-/// 滑动窗口聊天裁剪器：集成归档管线。
-/// 流程：剥离旧注入 → 滑动窗口裁剪 → 归档被裁剪的消息
-/// 记忆回忆注入由主循环在输入消息时触发。MemorySaver 由 MainAgent 在流式输出完成后调用。
+/// 滑动窗口聊天裁剪器：集成三层记忆管线。
+/// 流程：剥离旧注入 → 滑动窗口裁剪 → 归档（摘要→近期记忆→巩固核心记忆）→ 注入记忆
 /// </summary>
 public class SlidingWindowChatReducer : IChatReducer
 {
     internal const string AutoMemoryKey = "__auto_memories__";
+    internal const string AutoRecentMemoryKey = "__auto_recent_memory__";
     internal const string AutoPrimaryMemoryKey = "__auto_primary_memory__";
 
     private readonly int _windowSize;
@@ -20,7 +20,7 @@ public class SlidingWindowChatReducer : IChatReducer
     private readonly string? _systemPrompt;
     private readonly ConversationArchiver? _archiver;
 
-    private Dictionary<string, ChatMessage> _trimmedMessages = new Dictionary<string, ChatMessage>();
+    private readonly Dictionary<string, ChatMessage> _trimmedMessages = new();
 
     /// <param name="windowSize">裁剪后保留的消息数</param>
     /// <param name="overflowBuffer">超出 windowSize 多少条后才触发裁剪。默认 5。</param>
@@ -41,9 +41,10 @@ public class SlidingWindowChatReducer : IChatReducer
     {
         var all = messages.ToList();
 
-        // ── 1. 剥离旧的自动注入消息（记忆 + 主要记忆 + 旧版摘要兼容）──
+        // ── 1. 剥离旧的自动注入消息 ──
         var systemMessages = new List<ChatMessage>();
         var conversationMessages = new List<ChatMessage>();
+        ChatMessage? existingRecentMemory = null;
         ChatMessage? existingPrimaryMemory = null;
 
         foreach (var msg in all)
@@ -54,9 +55,14 @@ public class SlidingWindowChatReducer : IChatReducer
                 continue;
             if (msg.AdditionalProperties?.ContainsKey(ConversationArchiver.AutoSummaryKey) == true)
                 continue;
+            if (msg.AdditionalProperties?.ContainsKey(AutoRecentMemoryKey) == true)
+            {
+                existingRecentMemory = msg;
+                continue;
+            }
             if (msg.AdditionalProperties?.ContainsKey(AutoPrimaryMemoryKey) == true)
             {
-                existingPrimaryMemory = msg; // 保留引用，裁剪时更新而非新增
+                existingPrimaryMemory = msg;
                 continue;
             }
 
@@ -69,7 +75,7 @@ public class SlidingWindowChatReducer : IChatReducer
         if (_systemPrompt is not null && systemMessages.Count == 0)
             systemMessages.Add(new ChatMessage(ChatRole.System, _systemPrompt));
 
-        // ── 2. 滑动窗口裁剪（超出 windowSize + overflowBuffer 才触发，裁剪到 windowSize）──
+        // ── 2. 滑动窗口裁剪 ──
         var trimmedMessages = new List<ChatMessage>();
 
         if (conversationMessages.Count > _windowSize + _overflowBuffer)
@@ -86,13 +92,14 @@ public class SlidingWindowChatReducer : IChatReducer
             conversationMessages = conversationMessages.Skip(cutIndex).ToList();
         }
 
-        // ── 3. 归档被裁剪的消息（提取核心信息到主记忆 + 保存历史文件）──
-        string? primaryMemory = null;
+        // ── 3. 归档被裁剪的消息（摘要 → 近期记忆 → 溢出巩固核心记忆）──
+        ArchiveResult? archiveResult = null;
         if (_archiver is not null && trimmedMessages.Count > 0)
         {
             try
             {
-                primaryMemory = await _archiver.ArchiveAsync(trimmedMessages, conversationMessages, cancellationToken);
+                archiveResult = await _archiver.ArchiveAsync(
+                    trimmedMessages, conversationMessages, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -100,27 +107,84 @@ public class SlidingWindowChatReducer : IChatReducer
             }
         }
 
-        // ── 4. 注入主要记忆（归档产生新内容则更新，否则保留已有的）──
-        if (!string.IsNullOrWhiteSpace(primaryMemory))
-        {
-            systemMessages.Add(new ChatMessage(ChatRole.System,
-                $"[主要记忆] 以下是持久化的长期重要信息：\n\n{primaryMemory}")
-            {
-                AdditionalProperties = new() { [AutoPrimaryMemoryKey] = true }
-            });
-            conversationMessages.Add(new ChatMessage(ChatRole.User,
-                $"继续目标（如果有或未完成）")
-            {
-                AdditionalProperties = new() { [AutoMemoryKey] = true }
-            });
-            AppLogger.Log($"[Reducer] 已注入主要记忆（{primaryMemory.Length}字）");
-        }
-        else if (existingPrimaryMemory is not null)
-        {
-            systemMessages.Add(existingPrimaryMemory);
-        }
+        // ── 4. 注入记忆 ──
+        InjectMemories(systemMessages, conversationMessages,
+            archiveResult, existingRecentMemory, existingPrimaryMemory);
 
         IEnumerable<ChatMessage> result = [.. systemMessages, .. conversationMessages];
         return result;
+    }
+
+    private void InjectMemories(
+        List<ChatMessage> systemMessages,
+        List<ChatMessage> conversationMessages,
+        ArchiveResult? archiveResult,
+        ChatMessage? existingRecentMemory,
+        ChatMessage? existingPrimaryMemory)
+    {
+        string? recentMemory;
+        string? primaryMemory;
+
+        if (archiveResult is not null)
+        {
+            // 归档刚发生，使用最新内容
+            recentMemory = archiveResult.RecentMemory;
+            primaryMemory = archiveResult.PrimaryMemory;
+        }
+        else if (existingRecentMemory is not null || existingPrimaryMemory is not null)
+        {
+            // 无归档，保留已有注入
+            if (existingRecentMemory is not null)
+                systemMessages.Add(existingRecentMemory);
+            if (existingPrimaryMemory is not null)
+                systemMessages.Add(existingPrimaryMemory);
+            return;
+        }
+        else if (_archiver is not null)
+        {
+            // 首次加载，从文件读取
+            recentMemory = _archiver.ReadRecentMemory();
+            primaryMemory = _archiver.ReadPrimaryMemory();
+        }
+        else
+        {
+            return;
+        }
+
+        var injected = false;
+
+        // 注入核心记忆
+        if (!string.IsNullOrWhiteSpace(primaryMemory))
+        {
+            systemMessages.Add(new ChatMessage(ChatRole.System,
+                $"[核心记忆] 以下是持久化的长期重要信息：\n\n{primaryMemory}")
+            {
+                AdditionalProperties = new() { [AutoPrimaryMemoryKey] = true }
+            });
+            injected = true;
+            AppLogger.Log($"[Reducer] 已注入核心记忆（{primaryMemory.Length}字）");
+        }
+
+        // 注入近期记忆
+        if (!string.IsNullOrWhiteSpace(recentMemory))
+        {
+            systemMessages.Add(new ChatMessage(ChatRole.System,
+                $"[近期记忆] 以下是最近对话的详细摘要：\n\n{recentMemory}")
+            {
+                AdditionalProperties = new() { [AutoRecentMemoryKey] = true }
+            });
+            injected = true;
+            AppLogger.Log($"[Reducer] 已注入近期记忆（{recentMemory.Length}字）");
+        }
+
+        // 归档后提示继续目标
+        if (injected && archiveResult is not null)
+        {
+            conversationMessages.Add(new ChatMessage(ChatRole.User,
+                "继续目标（如果有或未完成）")
+            {
+                AdditionalProperties = new() { [AutoMemoryKey] = true }
+            });
+        }
     }
 }

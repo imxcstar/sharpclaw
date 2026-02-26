@@ -50,8 +50,9 @@ public class MainAgent
         _chatIO = chatIO;
 
         // 主要记忆文件路径
-        var primaryMemoryPath = Path.Combine(
-            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "primary_memory.md");
+        var sharpclawDir = Path.GetDirectoryName(SharpclawConfig.ConfigPath)!;
+        var recentMemoryPath = Path.Combine(sharpclawDir, "recent_memory.md");
+        var primaryMemoryPath = Path.Combine(sharpclawDir, "primary_memory.md");
 
         // 按智能体创建各自的 AI 客户端
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
@@ -64,7 +65,7 @@ public class MainAgent
             if (config.Agents.Recaller.Enabled)
             {
                 var recallerClient = ClientFactory.CreateAgentClient(config, config.Agents.Recaller);
-                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore, primaryMemoryPath);
+                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
             }
 
             if (config.Agents.Saver.Enabled)
@@ -80,7 +81,7 @@ public class MainAgent
         if (config.Agents.Summarizer.Enabled)
         {
             var archiverClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
-            archiver = new ConversationArchiver(archiverClient, primaryMemoryPath);
+            archiver = new ConversationArchiver(archiverClient, recentMemoryPath, primaryMemoryPath);
         }
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];

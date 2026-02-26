@@ -34,21 +34,19 @@ public class MemoryRecaller : AIContextProvider
 
     private readonly IChatClient _client;
     private readonly IMemoryStore _memoryStore;
-    private readonly string? _primaryMemoryPath;
 
     private List<MemoryEntry> _currentMemories = [];
     private readonly List<ChatMessage> _conversationHistory = [];
 
     public int MaxMemories { get; set; } = 10;
 
-    public MemoryRecaller(IChatClient baseClient, IMemoryStore memoryStore, string? primaryMemoryPath = null)
+    public MemoryRecaller(IChatClient baseClient, IMemoryStore memoryStore)
         : base("MemoryRecaller")
     {
         _client = new ChatClientBuilder(baseClient)
             .UseFunctionInvocation()
             .Build();
         _memoryStore = memoryStore;
-        _primaryMemoryPath = primaryMemoryPath;
     }
 
     protected override async ValueTask<AIContext> InvokingCoreAsync(
@@ -178,18 +176,7 @@ public class MemoryRecaller : AIContextProvider
 
         _currentMemories = [.. keptMemories, .. topNew];
 
-        // 加载主要记忆
-        var primaryMemory = "";
-        if (_primaryMemoryPath is not null && File.Exists(_primaryMemoryPath))
-        {
-            try
-            {
-                primaryMemory = await File.ReadAllTextAsync(_primaryMemoryPath, cancellationToken);
-            }
-            catch { /* ignore read errors */ }
-        }
-
-        if (_currentMemories.Count == 0 && string.IsNullOrWhiteSpace(primaryMemory))
+        if (_currentMemories.Count == 0)
         {
             AppLogger.Log("[AutoRecall] 无记忆需要注入");
             return new AIContext();
@@ -199,20 +186,7 @@ public class MemoryRecaller : AIContextProvider
         foreach (var m in _currentMemories)
             AppLogger.Log($"  - [{m.Category}] {m.Content}");
 
-        // 合并主要记忆和工作记忆
-        var instructions = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(primaryMemory))
-        {
-            instructions.AppendLine("[主要记忆] 以下是持久化的长期重要信息：");
-            instructions.AppendLine(primaryMemory);
-            instructions.AppendLine();
-        }
-        if (_currentMemories.Count > 0)
-        {
-            instructions.Append(FormatMemoryInstructions(_currentMemories));
-        }
-
-        return new AIContext { Instructions = instructions.ToString() };
+        return new AIContext { Instructions = FormatMemoryInstructions(_currentMemories) };
     }
 
     protected override ValueTask InvokedCoreAsync(

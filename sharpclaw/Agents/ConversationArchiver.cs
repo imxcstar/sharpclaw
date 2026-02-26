@@ -9,37 +9,53 @@ using System.Text.Json;
 namespace sharpclaw.Agents;
 
 /// <summary>
-/// 对话归档器：当滑动窗口裁剪掉旧消息时，用 AI 提取核心信息更新主要记忆，
-/// 并将被裁剪的完整对话保存为 Markdown 历史文件。
+/// 对话归档器：三层记忆管线。
+/// 窗口裁剪时：AI 生成详细摘要 → 追加到近期记忆 → 溢出时巩固到核心记忆。
+/// 同时将被裁剪的完整对话保存为 Markdown 历史文件。
 /// </summary>
 public class ConversationArchiver
 {
     /// <summary>向后兼容：用于剥离旧会话中残留的摘要注入消息。</summary>
     internal const string AutoSummaryKey = "__auto_summary__";
 
-    private static readonly string ArchiverPrompt = """
-        你是一个记忆提取助手。你的任务是从被裁剪的对话内容中提取核心信息，更新主要记忆。
+    private const int RecentMemoryMaxLength = 5000;
+
+    private static readonly string SummarizerPrompt = """
+        你是一个对话摘要助手。你的任务是为被裁剪的对话生成详细摘要，保留关键细节。
+
+        你会收到被裁剪掉的对话内容（即将从窗口中移除的旧消息）。
+
+        摘要要求：
+        - 保留具体的操作细节（分析了哪个文件、发现了什么问题、做了什么修改）
+        - 保留目标进展信息（完成了哪些步骤、还有哪些待完成、当前进度如何）
+        - 保留关键的数据、结论和决策
+        - 保留用户表达的偏好和需求
+        - 按时间顺序组织，使用简洁但信息密度高的语言
+        - 忽略寒暄、确认等无信息量的内容
+        - 工具调用只保留关键结论，不需要记录调用细节
+
+        直接输出摘要文本，不要加任何前缀或说明。
+        """;
+
+    private static readonly string ConsolidatorPrompt = """
+        你是一个记忆巩固助手。你的任务是将近期记忆中较旧的摘要巩固到核心记忆中。
 
         你会收到：
-        1. 本次被裁剪掉的对话内容（即将从窗口中移除的旧消息）
-        2. 当前保留在窗口中的对话内容（供你参考上下文，避免提取重复信息）
-        3. 当前主要记忆的内容（已持久化的长期信息）
+        1. 需要巩固的近期记忆摘要（较旧的部分，即将从近期记忆中移除）
+        2. 当前核心记忆的内容（已持久化的长期信息）
 
-        请分析被裁剪的对话，提取其中的核心信息，然后调用 UpdatePrimaryMemory 工具更新主要记忆。bu
+        请分析这些摘要，提取核心信息，然后调用 UpdateCoreMemory 工具更新核心记忆。
 
-        提取规则：
+        巩固规则：
         - 提取重要的事实、决策、用户偏好、待办事项、讨论结论
-        - 提取用户明确表达的长期有效信息
-        - **重点关注目标信息**：用户正在进行的目标、计划、任务进展（例如"正在开发XX功能"、"计划重构XX模块"），这些是最重要的记忆内容
-        - 如果对话中体现了用户的阶段性目标或长期目标，务必记录，建议在主要记忆中用独立的"当前目标"分区维护
+        - **重点关注目标信息**：用户正在进行的目标、计划、任务进展，这些是最重要的记忆内容
+        - 如果摘要中体现了目标的阶段性进展，务必记录到核心记忆的"当前目标"分区
         - 如果目标已完成，将其从进行中移到已完成或直接移除
-        - 不要提取保留窗口中已有的信息（避免重复）
-        - 忽略临时性的对话内容（寒暄、确认、临时状态）
-        - 忽略工具调用的具体细节（只保留关键结论）
-        - 将新提取的信息与已有主要记忆合并，不要丢失已有信息
-        - 使用 Markdown 格式，按以下示例的分区结构组织，简洁精炼
+        - 将新信息与已有核心记忆合并，不要丢失已有信息
+        - 核心记忆是高度压缩的，只保留最重要的信息
+        - 使用 Markdown 格式，按以下分区结构组织，简洁精炼
 
-        主要记忆格式示例：
+        核心记忆格式示例：
         ```markdown
         ## 当前目标
         - 正在开发电商平台的订单模块，需要支持退款流程
@@ -68,50 +84,226 @@ public class ConversationArchiver
         - 并发问题决定用乐观锁处理，不用分布式锁
         ```
 
-        如果被裁剪的内容中没有值得保留的核心信息，则不需要调用工具，直接回复"无需更新"。
+        如果摘要中没有值得巩固的核心信息，则不需要调用工具，直接回复"无需更新"。
         """;
 
     private readonly IChatClient _client;
-    private readonly string? _primaryMemoryPath;
+    private readonly string _recentMemoryPath;
+    private readonly string _primaryMemoryPath;
     private readonly string _historyDir;
 
-    public ConversationArchiver(IChatClient client, string? primaryMemoryPath = null)
+    public ConversationArchiver(IChatClient client, string recentMemoryPath, string primaryMemoryPath)
     {
         _client = new ChatClientBuilder(client)
             .UseFunctionInvocation()
             .Build();
+        _recentMemoryPath = recentMemoryPath;
         _primaryMemoryPath = primaryMemoryPath;
         _historyDir = Path.Combine(
             Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "history");
     }
 
     /// <summary>
-    /// 归档被裁剪的消息：提取核心信息到主要记忆，保存完整对话为历史文件。
+    /// 归档被裁剪的消息：生成详细摘要 → 追加到近期记忆 → 溢出时巩固到核心记忆。
     /// </summary>
-    /// <param name="trimmedMessages">被裁剪掉的消息</param>
-    /// <param name="retainedMessages">保留在窗口中的消息，供 AI 参考避免提取重复信息</param>
-    /// <param name="cancellationToken"></param>
-    /// <returns>更新后的主要记忆内容，如果没有主要记忆则返回 null</returns>
-    public async Task<string?> ArchiveAsync(
+    /// <returns>归档结果，包含近期记忆和核心记忆的当前内容</returns>
+    public async Task<ArchiveResult> ArchiveAsync(
         IReadOnlyList<ChatMessage> trimmedMessages,
         IReadOnlyList<ChatMessage> retainedMessages,
         CancellationToken cancellationToken = default)
     {
         if (trimmedMessages.Count == 0)
-            return null;
+            return new ArchiveResult(ReadFile(_recentMemoryPath), ReadFile(_primaryMemoryPath));
 
-        // 并行执行：保存历史文件 + AI 提取核心信息
+        // 并行：保存历史文件 + AI 生成详细摘要
         var saveTask = SaveHistoryFileAsync(trimmedMessages, cancellationToken);
-        var extractTask = ExtractCoreInfoAsync(trimmedMessages, retainedMessages, cancellationToken);
+        var summaryTask = SummarizeAsync(trimmedMessages, cancellationToken);
 
-        await Task.WhenAll(saveTask, extractTask);
+        await Task.WhenAll(saveTask, summaryTask);
 
-        return extractTask.Result;
+        var summary = summaryTask.Result;
+
+        // 追加摘要到近期记忆
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            AppendRecentMemory(summary);
+            AppLogger.Log($"[Archive] 已追加近期记忆（{summary.Length}字）");
+        }
+
+        // 检查近期记忆是否溢出，溢出则巩固到核心记忆
+        var recentMemory = ReadFile(_recentMemoryPath) ?? "";
+        if (recentMemory.Length > RecentMemoryMaxLength)
+        {
+            try
+            {
+                await ConsolidateAsync(recentMemory, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Archive] 记忆巩固失败: {ex.Message}");
+            }
+        }
+
+        return new ArchiveResult(
+            ReadFile(_recentMemoryPath),
+            ReadFile(_primaryMemoryPath));
     }
 
-    /// <summary>
-    /// 将被裁剪的消息保存为 Markdown 历史文件。
-    /// </summary>
+    /// <summary>读取近期记忆。</summary>
+    public string? ReadRecentMemory() => ReadFile(_recentMemoryPath);
+
+    /// <summary>读取核心记忆。</summary>
+    public string? ReadPrimaryMemory() => ReadFile(_primaryMemoryPath);
+
+    #region 第一层：AI 生成详细摘要
+
+    private async Task<string?> SummarizeAsync(
+        IReadOnlyList<ChatMessage> trimmedMessages,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            AppLogger.SetStatus("生成对话摘要...");
+
+            var trimmedText = FormatMessages(trimmedMessages);
+            if (trimmedText.Length == 0)
+                return null;
+
+            var messages = new List<ChatMessage>
+            {
+                new(ChatRole.User, trimmedText.ToString())
+            };
+
+            var options = new ChatOptions { Instructions = SummarizerPrompt };
+            var response = await _client.GetResponseAsync(messages, options, cancellationToken);
+
+            var summary = response.Text?.Trim();
+            AppLogger.Log($"[Archive] 摘要生成完成（{summary?.Length ?? 0}字）");
+            return string.IsNullOrWhiteSpace(summary) ? null : summary;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[Archive] 摘要生成失败: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void AppendRecentMemory(string summary)
+    {
+        var dir = Path.GetDirectoryName(_recentMemoryPath);
+        if (dir is not null && !Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
+
+        var entry = $"### {DateTime.Now:yyyy-MM-dd HH:mm}\n{summary}\n\n";
+        File.AppendAllText(_recentMemoryPath, entry);
+    }
+
+    #endregion
+
+    #region 第二层：近期记忆溢出 → 巩固到核心记忆
+
+    private async Task ConsolidateAsync(string recentMemory, CancellationToken cancellationToken)
+    {
+        AppLogger.SetStatus("巩固核心记忆...");
+
+        // 按 ### 分段，取前半部分巩固，保留后半部分
+        var sections = SplitSections(recentMemory);
+        if (sections.Count <= 1)
+            return;
+
+        var splitIndex = sections.Count / 2;
+        var toConsolidate = string.Join("", sections.Take(splitIndex));
+        var toRetain = string.Join("", sections.Skip(splitIndex));
+
+        var primaryMemory = ReadFile(_primaryMemoryPath) ?? "";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("## 需要巩固的近期记忆摘要");
+        sb.AppendLine(toConsolidate);
+        sb.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(primaryMemory))
+        {
+            sb.AppendLine("## 当前核心记忆内容");
+            sb.AppendLine(primaryMemory);
+        }
+        else
+        {
+            sb.AppendLine("## 当前无核心记忆");
+        }
+
+        string? updatedPrimary = null;
+
+        [Description("更新核心记忆。将巩固后的信息写入持久化存储。传入完整的新内容（应包含已有内容的合并）。")]
+        async Task<string> UpdateCoreMemory(
+            [Description("核心记忆的完整新内容（Markdown 格式）")] string content)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(_primaryMemoryPath);
+                if (dir is not null && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                await File.WriteAllTextAsync(_primaryMemoryPath, content, cancellationToken);
+                updatedPrimary = content;
+                AppLogger.Log($"[Archive] 已更新核心记忆（{content.Length}字）");
+                return $"已更新核心记忆（{content.Length}字）";
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Archive] 核心记忆写入失败: {ex.Message}");
+                return $"写入失败: {ex.Message}";
+            }
+        }
+
+        var options = new ChatOptions
+        {
+            Instructions = ConsolidatorPrompt,
+            Tools = [AIFunctionFactory.Create(UpdateCoreMemory)]
+        };
+
+        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new ChatClientAgentOptions
+        {
+            ChatOptions = options
+        });
+
+        var messages = new List<ChatMessage> { new(ChatRole.User, sb.ToString()) };
+        await agent.RunAsync(messages, cancellationToken: cancellationToken);
+
+        // 无论巩固是否成功，都裁剪近期记忆（移除已巩固的部分）
+        await File.WriteAllTextAsync(_recentMemoryPath, toRetain, cancellationToken);
+
+        var consolidated = updatedPrimary is not null ? "已巩固" : "无需巩固";
+        AppLogger.Log($"[Archive] 近期记忆裁剪完成（{consolidated}，保留{toRetain.Length}字）");
+    }
+
+    /// <summary>按 ### 标题分段。</summary>
+    private static List<string> SplitSections(string text)
+    {
+        var sections = new List<string>();
+        var lines = text.Split('\n');
+        var current = new StringBuilder();
+
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("### ") && current.Length > 0)
+            {
+                sections.Add(current.ToString());
+                current.Clear();
+            }
+            current.AppendLine(line);
+        }
+
+        if (current.Length > 0)
+            sections.Add(current.ToString());
+
+        return sections;
+    }
+
+    #endregion
+
+    #region 历史文件保存
+
     private async Task SaveHistoryFileAsync(
         IReadOnlyList<ChatMessage> messages,
         CancellationToken cancellationToken)
@@ -168,111 +360,17 @@ public class ConversationArchiver
         }
     }
 
-    /// <summary>
-    /// 用 AI 提取被裁剪消息中的核心信息，更新主要记忆。
-    /// </summary>
-    /// <returns>更新后的主要记忆内容，如果没有则返回 null</returns>
-    private async Task<string?> ExtractCoreInfoAsync(
-        IReadOnlyList<ChatMessage> trimmedMessages,
-        IReadOnlyList<ChatMessage> retainedMessages,
-        CancellationToken cancellationToken)
+    #endregion
+
+    #region 工具方法
+
+    private static string? ReadFile(string? path)
     {
-        if (_primaryMemoryPath is null)
-            return null;
-
-        try
-        {
-            AppLogger.SetStatus("提取核心记忆...");
-
-            // 提取被裁剪消息的文本
-            var trimmedText = FormatMessages(trimmedMessages);
-            if (trimmedText.Length == 0)
-                return ReadPrimaryMemory();
-
-            // 读取当前主要记忆
-            var primaryMemory = ReadPrimaryMemory() ?? "";
-
-            var sb = new StringBuilder();
-            sb.AppendLine("## 本次被裁剪的对话内容");
-            sb.Append(trimmedText);
-            sb.AppendLine();
-
-            // 保留消息供参考
-            var retainedText = FormatMessages(retainedMessages, maxResultLength: 100);
-            if (retainedText.Length > 0)
-            {
-                sb.AppendLine("## 当前保留在窗口中的对话内容（不要重复提取这些信息）");
-                sb.Append(retainedText);
-                sb.AppendLine();
-            }
-
-            if (!string.IsNullOrWhiteSpace(primaryMemory))
-            {
-                sb.AppendLine("## 当前主要记忆内容");
-                sb.AppendLine(primaryMemory);
-            }
-            else
-            {
-                sb.AppendLine("## 当前无主要记忆");
-            }
-
-            // 捕获工具写入的内容
-            string? updatedContent = null;
-
-            // UpdatePrimaryMemory 工具
-            [Description("更新主要记忆文件。将核心信息（用户偏好、关键事实、重要决策）写入持久化存储。传入完整的新内容（应包含已有内容的合并）。")]
-            async Task<string> UpdatePrimaryMemory(
-                [Description("主要记忆的完整新内容（Markdown 格式）")] string content)
-            {
-                try
-                {
-                    var dir = Path.GetDirectoryName(_primaryMemoryPath);
-                    if (dir is not null && !Directory.Exists(dir))
-                        Directory.CreateDirectory(dir);
-
-                    await File.WriteAllTextAsync(_primaryMemoryPath, content, cancellationToken);
-                    updatedContent = content;
-                    AppLogger.Log($"[Archive] 已更新主要记忆（{content.Length}字）");
-                    return $"已更新主要记忆（{content.Length}字）";
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Log($"[Archive] 主要记忆写入失败: {ex.Message}");
-                    return $"写入失败: {ex.Message}";
-                }
-            }
-
-            var options = new ChatOptions
-            {
-                Instructions = ArchiverPrompt,
-                Tools = [AIFunctionFactory.Create(UpdatePrimaryMemory)]
-            };
-
-            var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new ChatClientAgentOptions
-            {
-                ChatOptions = options
-            });
-
-            var messages = new List<ChatMessage> { new(ChatRole.User, sb.ToString()) };
-            await agent.RunAsync(messages, cancellationToken: cancellationToken);
-
-            // 如果工具被调用，返回更新后的内容；否则返回已有的主要记忆
-            return updatedContent ?? (string.IsNullOrWhiteSpace(primaryMemory) ? null : primaryMemory);
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Log($"[Archive] 核心信息提取失败: {ex.Message}");
-            return ReadPrimaryMemory();
-        }
-    }
-
-    private string? ReadPrimaryMemory()
-    {
-        if (_primaryMemoryPath is null || !File.Exists(_primaryMemoryPath))
+        if (path is null || !File.Exists(path))
             return null;
         try
         {
-            var content = File.ReadAllText(_primaryMemoryPath);
+            var content = File.ReadAllText(path);
             return string.IsNullOrWhiteSpace(content) ? null : content;
         }
         catch { return null; }
@@ -318,4 +416,9 @@ public class ConversationArchiver
         }
         return sb;
     }
+
+    #endregion
 }
+
+/// <summary>归档结果：近期记忆和核心记忆的当前内容。</summary>
+public record ArchiveResult(string? RecentMemory, string? PrimaryMemory);
