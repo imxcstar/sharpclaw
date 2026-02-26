@@ -88,7 +88,8 @@ public class ConversationArchiver
             ## 注意
 
             - 摘要必须写入近期记忆文件，不要只输出文本
-            - 如果对话内容确实没有任何有意义的信息，可以不保存
+            - 如果对话内容有任何有意义的信息，无论其他记忆文件中是否已有相同或类似内容，都必须写入近期记忆
+            - 只有对话内容完全没有任何有意义信息时，才可以不保存
             """;
 
         _consolidatorPrompt = $"""
@@ -150,7 +151,8 @@ public class ConversationArchiver
             ## 注意
 
             - 必须先查看已有核心记忆内容再决定如何合并
-            - 如果摘要中没有值得巩固的核心信息，不需要写入
+            - 有值得巩固的信息时，无论其他记忆中是否已有相同或类似内容，都必须写入核心记忆
+            - 只有摘要中完全没有值得巩固的核心信息时，才可以不写入
             """;
     }
 
@@ -214,9 +216,9 @@ public class ConversationArchiver
                 ChatOptions = options
             });
 
-            await agent.RunAsync(
+            await RunAgentStreamingAsync(agent,
                 new ChatMessage(ChatRole.User, "请读取工作记忆文件，为被裁剪的对话生成摘要并保存到近期记忆。"),
-                cancellationToken: cancellationToken);
+                "Summarizer", cancellationToken);
         }
         catch (Exception ex)
         {
@@ -256,7 +258,9 @@ public class ConversationArchiver
             ChatOptions = options
         });
 
-        await agent.RunAsync(new ChatMessage(ChatRole.User, sb.ToString()), cancellationToken: cancellationToken);
+        await RunAgentStreamingAsync(agent,
+            new ChatMessage(ChatRole.User, sb.ToString()),
+            "Consolidator", cancellationToken);
 
         // 无论巩固是否成功，都裁剪近期记忆（移除已巩固的部分）
         await File.WriteAllTextAsync(_recentMemoryPath, toRetain, cancellationToken);
@@ -350,6 +354,34 @@ public class ConversationArchiver
     #endregion
 
     #region 工具方法
+
+    private static async Task RunAgentStreamingAsync(
+        ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
+    {
+        var session = await agent.CreateSessionAsync();
+        await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
+        {
+            foreach (var content in update.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text:
+                        AppLogger.Log($"[{logPrefix}] {text.Text}");
+                        break;
+                    case TextReasoningContent reasoning:
+                        AppLogger.Log($"[{logPrefix}:Reasoning] {reasoning.Text}");
+                        break;
+                    case FunctionCallContent call:
+                        AppLogger.SetStatus($"{logPrefix}: {call.Name}");
+                        AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                        break;
+                    case FunctionResultContent result:
+                        AppLogger.Log($"[{logPrefix}:Result] {JsonSerializer.Serialize(result.Result)}");
+                        break;
+                }
+            }
+        }
+    }
 
     private static string? ReadFile(string? path)
     {

@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
 using System.ComponentModel;
 using System.Text;
+using System.Text.Json;
 
 using sharpclaw.Memory;
 using sharpclaw.UI;
@@ -69,8 +70,9 @@ public class MemorySaver
 
             ## 注意
 
-            - 保存前务必先搜索，避免重复保存
+            - 保存前务必先搜索向量记忆库，避免库内重复保存
             - 可以多次搜索不同关键词，确保全面检查
+            - 有值得记忆的信息时，无论其他记忆文件中是否已有相同或类似内容，都必须保存到向量记忆库
             - 记忆内容应独立、自包含，脱离对话上下文也能理解
             - 每次最多保存/更新/删除共 3 条记忆
             - 关注用户透露的事实、偏好、决策，以及 AI 执行的重要操作和结果
@@ -203,7 +205,36 @@ public class MemorySaver
             ChatOptions = options
         });
 
-        var ret = await agent.RunAsync(new ChatMessage(ChatRole.User, sb2.ToString()), cancellationToken: cancellationToken);
-        AppLogger.Log($"[AutoSave] 完成: {ret.Text}");
+        await RunAgentStreamingAsync(agent,
+            new ChatMessage(ChatRole.User, sb2.ToString()),
+            "MemorySaver", cancellationToken);
+    }
+
+    private static async Task RunAgentStreamingAsync(
+        ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
+    {
+        var session = await agent.CreateSessionAsync();
+        await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
+        {
+            foreach (var content in update.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text:
+                        AppLogger.Log($"[{logPrefix}] {text.Text}");
+                        break;
+                    case TextReasoningContent reasoning:
+                        AppLogger.Log($"[{logPrefix}:Reasoning] {reasoning.Text}");
+                        break;
+                    case FunctionCallContent call:
+                        AppLogger.SetStatus($"{logPrefix}: {call.Name}");
+                        AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                        break;
+                    case FunctionResultContent result:
+                        AppLogger.Log($"[{logPrefix}:Result] {JsonSerializer.Serialize(result.Result)}");
+                        break;
+                }
+            }
+        }
     }
 }
