@@ -13,6 +13,8 @@ namespace sharpclaw.Core;
 /// </summary>
 public static class ClientFactory
 {
+    private static readonly TimeSpan AgentTimeout = TimeSpan.FromMinutes(5);
+
     /// <summary>
     /// 根据已解析的智能体配置创建 IChatClient。
     /// </summary>
@@ -24,11 +26,16 @@ public static class ClientFactory
             {
                 AuthToken = resolved.ApiKey,
                 BaseUrl = resolved.Endpoint,
+                HttpClient = new HttpClient { Timeout = AgentTimeout },
             }.AsIChatClient(resolved.Model),
 
             "openai" => new OpenAIClient(
                     new System.ClientModel.ApiKeyCredential(resolved.ApiKey),
-                    new OpenAIClientOptions { Endpoint = new Uri(resolved.Endpoint) })
+                    new OpenAIClientOptions
+                    {
+                        Endpoint = new Uri(resolved.Endpoint),
+                        NetworkTimeout = AgentTimeout
+                    })
                 .GetChatClient(resolved.Model)
                 .AsIChatClient(),
 
@@ -56,7 +63,11 @@ public static class ClientFactory
         var mem = config.Memory;
         return new OpenAIClient(
                 new System.ClientModel.ApiKeyCredential(mem.EmbeddingApiKey),
-                new OpenAIClientOptions { Endpoint = new Uri(mem.EmbeddingEndpoint) })
+                new OpenAIClientOptions
+                {
+                    Endpoint = new Uri(mem.EmbeddingEndpoint),
+                    NetworkTimeout = AgentTimeout
+                })
             .GetEmbeddingClient(mem.EmbeddingModel)
             .AsIEmbeddingGenerator();
     }
@@ -71,7 +82,7 @@ public static class ClientFactory
             : null;
 
         return new DashScopeRerankClient(
-            new HttpClient(), mem.RerankApiKey, mem.RerankModel, endpoint);
+            new HttpClient { Timeout = AgentTimeout }, mem.RerankApiKey, mem.RerankModel, endpoint);
     }
 
     public static VectorMemoryStore? CreateMemoryStore(SharpclawConfig config)

@@ -87,7 +87,7 @@ public class MainAgent
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
         _reducer = new SlidingWindowChatReducer(
-            windowSize: 10,
+            windowSize: 20,
             systemPrompt: SystemPrompt,
             archiver: archiver,
             memorySaver: memorySaver);
