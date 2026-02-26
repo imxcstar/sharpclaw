@@ -195,7 +195,9 @@ public class MainAgent
                             AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                             break;
                         case FunctionResultContent result:
-                            AppLogger.Log($"[Result({result.CallId})] {JsonSerializer.Serialize(result.Result)}");
+                            var resultJson = JsonSerializer.Serialize(result.Result);
+                            if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
+                            AppLogger.Log($"[Result({result.CallId})] {resultJson}");
                             AppLogger.SetStatus("AI 思考中...");
                             break;
                     }

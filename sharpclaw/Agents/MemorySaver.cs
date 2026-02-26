@@ -213,6 +213,25 @@ public class MemorySaver
         ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
     {
         var session = await agent.CreateSessionAsync();
+        var buffer = new StringBuilder();
+        string? bufferType = null;
+
+        void Flush()
+        {
+            if (buffer.Length == 0) return;
+            AppLogger.Log($"[{logPrefix}:{bufferType}] {buffer}");
+            buffer.Clear();
+            bufferType = null;
+        }
+
+        void Append(string type, string text)
+        {
+            if (bufferType != type)
+                Flush();
+            bufferType = type;
+            buffer.Append(text);
+        }
+
         await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
         {
             foreach (var content in update.Contents)
@@ -220,20 +239,26 @@ public class MemorySaver
                 switch (content)
                 {
                     case TextContent text:
-                        AppLogger.Log($"[{logPrefix}] {text.Text}");
+                        Append("Text", text.Text);
                         break;
                     case TextReasoningContent reasoning:
-                        AppLogger.Log($"[{logPrefix}:Reasoning] {reasoning.Text}");
+                        Append("Reasoning", reasoning.Text);
                         break;
                     case FunctionCallContent call:
+                        Flush();
                         AppLogger.SetStatus($"{logPrefix}: {call.Name}");
                         AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                         break;
                     case FunctionResultContent result:
-                        AppLogger.Log($"[{logPrefix}:Result] {JsonSerializer.Serialize(result.Result)}");
+                        Flush();
+                        var resultJson = JsonSerializer.Serialize(result.Result);
+                        if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
+                        AppLogger.Log($"[{logPrefix}:Result] {resultJson}");
                         break;
                 }
             }
         }
+
+        Flush();
     }
 }
