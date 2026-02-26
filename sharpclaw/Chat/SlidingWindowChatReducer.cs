@@ -21,6 +21,7 @@ public class SlidingWindowChatReducer : IChatReducer
     internal const string AutoMemoryKey = "__auto_memories__";
     internal const string AutoRecentMemoryKey = "__auto_recent_memory__";
     internal const string AutoPrimaryMemoryKey = "__auto_primary_memory__";
+    internal const string AutoWorkingMemoryKey = "__auto_working_memory__";
 
     private readonly int _windowSize;
     private readonly int _overflowBuffer;
@@ -30,8 +31,16 @@ public class SlidingWindowChatReducer : IChatReducer
 
     private readonly Dictionary<string, ChatMessage> _trimmedMessages = new();
 
+    public static List<ChatMessage> LastMessages = new List<ChatMessage>();
+
     /// <summary>由 MainAgent 每轮设置，供 MemorySaver 检索相关记忆。</summary>
     public string? LatestUserInput { get; set; }
+
+    /// <summary>工作记忆文件路径，由 MainAgent 设置。</summary>
+    public string? WorkingMemoryPath { get; set; }
+
+    /// <summary>是否已注入工作记忆。会话重新 Run 时应重置为 false。</summary>
+    public bool WorkingMemoryInjected { get; set; }
 
     /// <param name="windowSize">裁剪后保留的消息数</param>
     /// <param name="overflowBuffer">超出 windowSize 多少条后才触发裁剪。默认 5。</param>
@@ -68,6 +77,8 @@ public class SlidingWindowChatReducer : IChatReducer
                 continue;
             if (msg.AdditionalProperties?.ContainsKey(ConversationArchiver.AutoSummaryKey) == true)
                 continue;
+            if (msg.AdditionalProperties?.ContainsKey(AutoWorkingMemoryKey) == true)
+                continue;
             if (msg.AdditionalProperties?.ContainsKey(AutoRecentMemoryKey) == true)
             {
                 existingRecentMemory = msg;
@@ -89,6 +100,7 @@ public class SlidingWindowChatReducer : IChatReducer
             systemMessages.Add(new ChatMessage(ChatRole.System, _systemPrompt));
 
         // ── 2. 记忆保存检测（裁剪前，确保即将被裁剪的消息也能被记忆）──
+        //&& conversationMessages.Count <= _windowSize + _overflowBuffer
         if (_memorySaver is not null && conversationMessages.Count > 0 && LatestUserInput is not null)
         {
             try
@@ -111,18 +123,28 @@ public class SlidingWindowChatReducer : IChatReducer
         {
             var cutIndex = Math.Max(0, conversationMessages.Count - _windowSize);
 
-            trimmedMessages = conversationMessages.Take(cutIndex).ToList();
-            foreach (var msg in trimmedMessages)
+            // 避免在函数调用和结果之间裁剪：如果裁剪点落在 FunctionResultContent 上，
+            // 向前回退到包含 FunctionCallContent 的消息，保持调用-结果完整
+            while (cutIndex > 0 &&
+                   conversationMessages[cutIndex].Contents.Any(c => c is FunctionResultContent))
+                cutIndex--;
+
+            if (cutIndex > 0)
             {
-                if (string.IsNullOrWhiteSpace(msg.MessageId))
-                    msg.MessageId = Guid.NewGuid().ToString();
-                _trimmedMessages[msg.MessageId] = msg;
+                trimmedMessages = conversationMessages.Take(cutIndex).ToList();
+                foreach (var msg in trimmedMessages)
+                {
+                    if (string.IsNullOrWhiteSpace(msg.MessageId))
+                        msg.MessageId = Guid.NewGuid().ToString();
+                    _trimmedMessages[msg.MessageId] = msg;
+                }
+                conversationMessages = conversationMessages.Skip(cutIndex).ToList();
             }
-            conversationMessages = conversationMessages.Skip(cutIndex).ToList();
         }
 
         // ── 4. 归档被裁剪的消息（摘要 → 近期记忆 → 溢出巩固核心记忆）──
         ArchiveResult? archiveResult = null;
+        //&& trimmedMessages.Count <= _windowSize + _overflowBuffer
         if (_archiver is not null && trimmedMessages.Count > 0)
         {
             try
@@ -140,7 +162,38 @@ public class SlidingWindowChatReducer : IChatReducer
         InjectMemories(systemMessages, conversationMessages,
             archiveResult, existingRecentMemory, existingPrimaryMemory);
 
-        IEnumerable<ChatMessage> result = [.. systemMessages, .. conversationMessages];
+        // ── 6. 首次注入工作记忆（上次会话的对话快照）──
+        if (!WorkingMemoryInjected && WorkingMemoryPath is not null && File.Exists(WorkingMemoryPath))
+        {
+            try
+            {
+                var workingMemory = File.ReadAllText(WorkingMemoryPath);
+                if (!string.IsNullOrWhiteSpace(workingMemory))
+                {
+                    systemMessages.Add(new ChatMessage(ChatRole.System,
+                        $"[工作记忆] 以下是上次会话的对话记录，供你参考延续上下文：\n\n{workingMemory}")
+                    {
+                        AdditionalProperties = new() { [AutoWorkingMemoryKey] = true }
+                    });
+                    AppLogger.Log($"[Reducer] 已注入工作记忆（{workingMemory.Length}字）");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Reducer] 工作记忆读取失败: {ex.Message}");
+            }
+            WorkingMemoryInjected = true;
+        }
+
+        // ── 7. 注入用户输入的信息 ──
+        if (conversationMessages.FirstOrDefault()?.Role != ChatRole.User)
+            conversationMessages.Insert(0, new ChatMessage(ChatRole.User, LatestUserInput)
+            {
+                AdditionalProperties = new() { [AutoMemoryKey] = true }
+            });
+
+        LastMessages = conversationMessages;
+        IEnumerable<ChatMessage> result = [.. systemMessages, .. LastMessages];
         return result;
     }
 
@@ -207,13 +260,13 @@ public class SlidingWindowChatReducer : IChatReducer
         }
 
         // 归档后提示继续目标
-        if (injected && archiveResult is not null)
-        {
-            conversationMessages.Add(new ChatMessage(ChatRole.User,
-                "继续目标（如果有或未完成）")
-            {
-                AdditionalProperties = new() { [AutoMemoryKey] = true }
-            });
-        }
+        //if (injected && archiveResult is not null)
+        //{
+        //    conversationMessages.Add(new ChatMessage(ChatRole.User,
+        //        "继续目标（如果有或未完成）")
+        //    {
+        //        AdditionalProperties = new() { [AutoMemoryKey] = true }
+        //    });
+        //}
     }
 }

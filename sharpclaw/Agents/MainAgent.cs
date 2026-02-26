@@ -33,7 +33,7 @@ public class MainAgent
 
     private readonly ChatClientAgent _agent;
     private readonly IChatIO _chatIO;
-    private readonly string _historyPath;
+    private readonly string _workingMemoryPath;
     private readonly SlidingWindowChatReducer _reducer;
     private InMemoryChatHistoryProvider? _historyProvider;
     private AgentSession? _session;
@@ -42,11 +42,10 @@ public class MainAgent
         SharpclawConfig config,
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
-        IChatIO chatIO,
-        string? historyPath = null)
+        IChatIO chatIO)
     {
-        _historyPath = historyPath ?? Path.Combine(
-            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "session.json");
+        _workingMemoryPath = Path.Combine(
+            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "working_memory.md");
         _chatIO = chatIO;
 
         // 主要记忆文件路径
@@ -88,10 +87,11 @@ public class MainAgent
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
         _reducer = new SlidingWindowChatReducer(
-            windowSize: 20,
+            windowSize: 10,
             systemPrompt: SystemPrompt,
             archiver: archiver,
             memorySaver: memorySaver);
+        _reducer.WorkingMemoryPath = _workingMemoryPath;
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
@@ -112,10 +112,7 @@ public class MainAgent
                         InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval
                     );
                     return new ValueTask<ChatHistoryProvider>(_historyProvider);
-                },
-                AIContextProviderFactory = memoryRecaller is not null
-                    ? (ctx, ct) => new ValueTask<AIContextProvider>(memoryRecaller)
-                    : null
+                }
             });
     }
 
@@ -126,10 +123,8 @@ public class MainAgent
     {
         await _chatIO.WaitForReadyAsync();
 
-        _session = File.Exists(_historyPath)
-            ? await _agent.DeserializeSessionAsync(
-                JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(_historyPath)))
-            : await _agent.CreateSessionAsync();
+        _session = await _agent.CreateSessionAsync();
+        _reducer.WorkingMemoryInjected = false;
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -211,9 +206,16 @@ public class MainAgent
         }
         _chatIO.AppendChat("\n");
 
-        // 持久化会话
-        var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));
-        File.WriteAllText(_historyPath, serialized);
+        // 持久化工作记忆
+        try
+        {
+            var formatted = ConversationArchiver.FormatMessages(SlidingWindowChatReducer.LastMessages).ToString();
+            File.WriteAllText(_workingMemoryPath, formatted);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[WorkingMemory] 保存失败: {ex.Message}");
+        }
     }
 
     private static AIFunction[] CreateMemoryTools(IMemoryStore memoryStore)
