@@ -11,7 +11,7 @@ namespace sharpclaw.Chat;
 ///
 /// 记忆管道：
 /// 1. 剥离旧注入：移除上一轮自动注入的系统消息（向量记忆、近期记忆、核心记忆等）
-/// 2. 记忆保存检测：每轮通过 MemorySaver 分析完整对话，结合核心记忆和近期记忆上下文，决定保存/更新/删除向量记忆
+/// 2. 记忆保存检测：每轮通过 MemorySaver 分析对话，结合核心记忆和近期记忆上下文，决定保存/更新/删除向量记忆
 /// 3. 滑动窗口裁剪：超出窗口大小时裁剪旧消息
 /// 4. 归档：对被裁剪的消息生成摘要追加到近期记忆，近期记忆溢出时巩固到核心记忆
 /// 5. 注入记忆：将核心记忆和近期记忆作为系统消息注入上下文
@@ -33,8 +33,8 @@ public class SlidingWindowChatReducer : IChatReducer
 
     public static List<ChatMessage> LastMessages = new List<ChatMessage>();
 
-    /// <summary>由 MainAgent 每轮设置，供 MemorySaver 检索相关记忆。</summary>
-    public string? LatestUserInput { get; set; }
+    /// <summary>由 MainAgent 每轮设置，用户本轮发起对话的原始输入。</summary>
+    public string? UserInput { get; set; }
 
     /// <summary>工作记忆文件路径，由 MainAgent 设置。</summary>
     public string? WorkingMemoryPath { get; set; }
@@ -99,28 +99,27 @@ public class SlidingWindowChatReducer : IChatReducer
         if (_systemPrompt is not null && systemMessages.Count == 0)
             systemMessages.Add(new ChatMessage(ChatRole.System, _systemPrompt));
 
-        // ── 2. 记忆保存检测（裁剪前，确保即将被裁剪的消息也能被记忆）──
-        //&& conversationMessages.Count <= _windowSize + _overflowBuffer
-        if (_memorySaver is not null && conversationMessages.Count > 0 && LatestUserInput is not null)
-        {
-            try
-            {
-                var recentMem = existingRecentMemory?.Text ?? _archiver?.ReadRecentMemory();
-                var primaryMem = existingPrimaryMemory?.Text ?? _archiver?.ReadPrimaryMemory();
-                await _memorySaver.SaveAsync(conversationMessages, LatestUserInput,
-                    recentMem, primaryMem, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[AutoSave] 记忆保存失败: {ex.Message}");
-            }
-        }
-
-        // ── 3. 滑动窗口裁剪 ──
+        // ── 2. 滑动窗口裁剪 ──
         var trimmedMessages = new List<ChatMessage>();
 
         if (conversationMessages.Count > _windowSize + _overflowBuffer)
         {
+            // ── 3. 记忆保存检测（裁剪前，确保即将被裁剪的消息也能被记忆）──
+            if (_memorySaver is not null && UserInput is not null)
+            {
+                try
+                {
+                    var recentMem = existingRecentMemory?.Text ?? _archiver?.ReadRecentMemory();
+                    var primaryMem = existingPrimaryMemory?.Text ?? _archiver?.ReadPrimaryMemory();
+                    await _memorySaver.SaveAsync(conversationMessages, UserInput,
+                        recentMem, primaryMem, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Log($"[AutoSave] 记忆保存失败: {ex.Message}");
+                }
+            }
+
             var cutIndex = Math.Max(0, conversationMessages.Count - _windowSize);
 
             // 避免在函数调用和结果之间裁剪：如果裁剪点落在 FunctionResultContent 上，
@@ -187,7 +186,7 @@ public class SlidingWindowChatReducer : IChatReducer
 
         // ── 7. 注入用户输入的信息 ──
         if (conversationMessages.FirstOrDefault()?.Role != ChatRole.User)
-            conversationMessages.Insert(0, new ChatMessage(ChatRole.User, LatestUserInput)
+            conversationMessages.Insert(0, new ChatMessage(ChatRole.User, UserInput)
             {
                 AdditionalProperties = new() { [AutoMemoryKey] = true }
             });

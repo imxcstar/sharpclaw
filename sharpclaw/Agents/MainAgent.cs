@@ -168,7 +168,7 @@ public class MainAgent
         };
 
         // 流式输出
-        _reducer.LatestUserInput = input;
+        _reducer.UserInput = input;
         AppLogger.SetStatus("AI 思考中...");
         _chatIO.BeginAiResponse();
         var responseBuilder = new StringBuilder();
