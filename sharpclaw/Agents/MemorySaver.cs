@@ -219,7 +219,7 @@ public class MemorySaver
         void Flush()
         {
             if (buffer.Length == 0) return;
-            AppLogger.Log($"[{logPrefix}:{bufferType}] {buffer}");
+            AppLogger.Log($"[{logPrefix}]: {buffer}");
             buffer.Clear();
             bufferType = null;
         }
@@ -238,23 +238,29 @@ public class MemorySaver
             {
                 switch (content)
                 {
-                    case TextContent text:
-                        Append("Text", text.Text);
-                        break;
-                    case TextReasoningContent reasoning:
-                        Append("Reasoning", reasoning.Text);
-                        break;
+                    //case TextContent text:
+                    //    Append("Text", text.Text);
+                    //    break;
+                    //case TextReasoningContent reasoning:
+                    //    AppLogger.SetStatus($"[{logPrefix}]思考中...");
+                    //    Append("Reasoning", reasoning.Text);
+                    //    break;
                     case FunctionCallContent call:
-                        Flush();
-                        AppLogger.SetStatus($"{logPrefix}: {call.Name}");
-                        AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                        //Flush();
+                        AppLogger.SetStatus($"[{logPrefix}]调用工具: {call.Name}");
+                        AppLogger.Log($"[{logPrefix}]调用工具: {call.Name}");
+                        //AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                         break;
-                    case FunctionResultContent result:
-                        Flush();
-                        var resultJson = JsonSerializer.Serialize(result.Result);
-                        if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
-                        AppLogger.Log($"[{logPrefix}:Result] {resultJson}");
-                        break;
+                    //default:
+                    //    Flush();
+                    //    break;
+
+                        //case FunctionResultContent result:
+                        //    Flush();
+                        //    var resultJson = JsonSerializer.Serialize(result.Result);
+                        //    if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
+                        //    AppLogger.Log($"[{logPrefix}:Result] {resultJson}");
+                        //    break;
                 }
             }
         }

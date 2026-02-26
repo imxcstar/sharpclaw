@@ -170,11 +170,28 @@ public class MainAgent
             new(ChatRole.User, input)
         };
 
+        var buffer = new StringBuilder();
+        string? bufferType = null;
+        void Flush()
+        {
+            if (buffer.Length == 0) return;
+            AppLogger.Log($"[Main]: {buffer}");
+            buffer.Clear();
+            bufferType = null;
+        }
+
+        void Append(string type, string text)
+        {
+            if (bufferType != type)
+                Flush();
+            bufferType = type;
+            buffer.Append(text);
+        }
+
         // 流式输出
         _reducer.UserInput = input;
         AppLogger.SetStatus("AI 思考中...");
         _chatIO.BeginAiResponse();
-        var responseBuilder = new StringBuilder();
         try
         {
             await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(aiToken))
@@ -185,21 +202,22 @@ public class MainAgent
                     {
                         case TextContent text:
                             _chatIO.AppendChat(text.Text);
-                            responseBuilder.Append(text.Text);
                             break;
                         case TextReasoningContent reasoning:
-                            AppLogger.Log($"[Reasoning] {reasoning.Text}");
+                            AppLogger.SetStatus($"[Main]思考中...");
+                            Append("Reasoning", reasoning.Text);
                             break;
                         case FunctionCallContent call:
-                            AppLogger.SetStatus($"调用工具: {call.Name}");
-                            AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                            AppLogger.SetStatus($"[Main]调用工具: {call.Name}");
+                            AppLogger.Log($"[Main]调用工具: {call.Name}");
+                            //AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                             break;
-                        case FunctionResultContent result:
-                            var resultJson = JsonSerializer.Serialize(result.Result);
-                            if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
-                            AppLogger.Log($"[Result({result.CallId})] {resultJson}");
-                            AppLogger.SetStatus("AI 思考中...");
-                            break;
+                        //case FunctionResultContent result:
+                        //    var resultJson = JsonSerializer.Serialize(result.Result);
+                        //    if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
+                        //    AppLogger.Log($"[Result({result.CallId})] {resultJson}");
+                        //    AppLogger.SetStatus("AI 思考中...");
+                        //    break;
                     }
                 }
             }
