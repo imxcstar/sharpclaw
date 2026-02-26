@@ -34,7 +34,7 @@ public class MainAgent
     private readonly ChatClientAgent _agent;
     private readonly IChatIO _chatIO;
     private readonly string _workingMemoryPath;
-    private readonly SlidingWindowChatReducer _reducer;
+    private readonly MemoryPipelineChatReducer _reducer;
     private InMemoryChatHistoryProvider? _historyProvider;
     private AgentSession? _session;
 
@@ -89,8 +89,8 @@ public class MainAgent
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
-        _reducer = new SlidingWindowChatReducer(
-            windowSize: 30,
+        _reducer = new MemoryPipelineChatReducer(
+            resetThreshold: 10,
             systemPrompt: SystemPrompt,
             archiver: archiver,
             memorySaver: memorySaver);
@@ -212,7 +212,7 @@ public class MainAgent
         // 持久化工作记忆
         try
         {
-            var formatted = ConversationArchiver.FormatMessages(SlidingWindowChatReducer.LastMessages).ToString();
+            var formatted = ConversationArchiver.FormatMessages(MemoryPipelineChatReducer.LastMessages).ToString();
             File.WriteAllText(_workingMemoryPath, formatted);
         }
         catch (Exception ex)
