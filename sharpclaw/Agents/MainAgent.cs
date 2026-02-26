@@ -56,22 +56,23 @@ public class MainAgent
         // 按智能体创建各自的 AI 客户端
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
 
-        MemoryRecaller? memoryRecaller = null;
         MemorySaver? memorySaver = null;
         AIFunction[] memoryTools = [];
 
+        var fileToolNames = new HashSet<string>
+        {
+            "CommandCat", "CommandCreateText", "AppendToFile",
+            "FileExists", "CommandDir", "CommandEditText", "SearchInFiles"
+        };
+        var fileTools = commandSkills.Where(t => fileToolNames.Contains(t.Name)).ToArray();
+
         if (memoryStore is not null)
         {
-            if (config.Agents.Recaller.Enabled)
-            {
-                var recallerClient = ClientFactory.CreateAgentClient(config, config.Agents.Recaller);
-                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
-            }
-
             if (config.Agents.Saver.Enabled)
             {
                 var saverClient = ClientFactory.CreateAgentClient(config, config.Agents.Saver);
-                memorySaver = new MemorySaver(saverClient, memoryStore);
+                memorySaver = new MemorySaver(saverClient, memoryStore,
+                    _workingMemoryPath, recentMemoryPath, primaryMemoryPath, fileTools);
             }
 
             memoryTools = CreateMemoryTools(memoryStore);
@@ -81,7 +82,9 @@ public class MainAgent
         if (config.Agents.Summarizer.Enabled)
         {
             var archiverClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
-            archiver = new ConversationArchiver(archiverClient, recentMemoryPath, primaryMemoryPath);
+            AIFunction[] archiverTools = [.. fileTools, .. memoryTools];
+            archiver = new ConversationArchiver(
+                archiverClient, _workingMemoryPath, recentMemoryPath, primaryMemoryPath, archiverTools);
         }
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];

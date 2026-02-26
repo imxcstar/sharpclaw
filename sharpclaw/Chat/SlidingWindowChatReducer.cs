@@ -96,6 +96,9 @@ public class SlidingWindowChatReducer : IChatReducer
         if (_systemPrompt is not null && systemMessages.Count == 0)
             systemMessages.Add(new ChatMessage(ChatRole.System, _systemPrompt));
 
+        // 保存工作记忆
+        SaveWorkingMemory(conversationMessages);
+
         // ── 2. 滑动窗口裁剪 ──
         var trimmedMessages = new List<ChatMessage>();
 
@@ -106,10 +109,7 @@ public class SlidingWindowChatReducer : IChatReducer
             {
                 try
                 {
-                    var recentMem = existingRecentMemory?.Text ?? _archiver?.ReadRecentMemory();
-                    var primaryMem = existingPrimaryMemory?.Text ?? _archiver?.ReadPrimaryMemory();
-                    await _memorySaver.SaveAsync(conversationMessages, UserInput,
-                        recentMem, primaryMem, cancellationToken);
+                    await _memorySaver.SaveAsync(conversationMessages, UserInput, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -136,7 +136,7 @@ public class SlidingWindowChatReducer : IChatReducer
             try
             {
                 archiveResult = await _archiver.ArchiveAsync(
-                    trimmedMessages, conversationMessages, cancellationToken);
+                    trimmedMessages, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -181,6 +181,27 @@ public class SlidingWindowChatReducer : IChatReducer
         LastMessages = conversationMessages;
         IEnumerable<ChatMessage> result = [.. systemMessages, .. LastMessages];
         return result;
+    }
+
+    private void SaveWorkingMemory(IReadOnlyList<ChatMessage> messages)
+    {
+        if (WorkingMemoryPath is null)
+            return;
+
+        try
+        {
+            var dir = Path.GetDirectoryName(WorkingMemoryPath);
+            if (dir is not null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            var formatted = ConversationArchiver.FormatMessages(messages).ToString();
+            File.WriteAllText(WorkingMemoryPath, formatted);
+            AppLogger.Log($"[Reducer] 已保存工作记忆（{formatted.Length}字）");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[Reducer] 工作记忆保存失败: {ex.Message}");
+        }
     }
 
     private void InjectMemories(
