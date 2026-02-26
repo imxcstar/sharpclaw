@@ -24,7 +24,6 @@ public class SlidingWindowChatReducer : IChatReducer
     internal const string AutoWorkingMemoryKey = "__auto_working_memory__";
 
     private readonly int _windowSize;
-    private readonly int _overflowBuffer;
     private readonly string? _systemPrompt;
     private readonly ConversationArchiver? _archiver;
     private readonly MemorySaver? _memorySaver;
@@ -46,13 +45,11 @@ public class SlidingWindowChatReducer : IChatReducer
     /// <param name="overflowBuffer">超出 windowSize 多少条后才触发裁剪。默认 5。</param>
     public SlidingWindowChatReducer(
         int windowSize,
-        int overflowBuffer = 5,
         string? systemPrompt = null,
         ConversationArchiver? archiver = null,
         MemorySaver? memorySaver = null)
     {
         _windowSize = windowSize;
-        _overflowBuffer = overflowBuffer;
         _systemPrompt = systemPrompt;
         _archiver = archiver;
         _memorySaver = memorySaver;
@@ -102,7 +99,7 @@ public class SlidingWindowChatReducer : IChatReducer
         // ── 2. 滑动窗口裁剪 ──
         var trimmedMessages = new List<ChatMessage>();
 
-        if (conversationMessages.Count > _windowSize + _overflowBuffer)
+        if (conversationMessages.Count > _windowSize)
         {
             // ── 3. 记忆保存检测（裁剪前，确保即将被裁剪的消息也能被记忆）──
             if (_memorySaver is not null && UserInput is not null)
@@ -120,25 +117,15 @@ public class SlidingWindowChatReducer : IChatReducer
                 }
             }
 
-            var cutIndex = Math.Max(0, conversationMessages.Count - _windowSize);
-
-            // 避免在函数调用和结果之间裁剪：如果裁剪点落在 FunctionResultContent 上，
-            // 向前回退到包含 FunctionCallContent 的消息，保持调用-结果完整
-            while (cutIndex > 0 &&
-                   conversationMessages[cutIndex].Contents.Any(c => c is FunctionResultContent))
-                cutIndex--;
-
-            if (cutIndex > 0)
+            var cutIndex = Math.Max(0, conversationMessages.Count);
+            trimmedMessages = conversationMessages.Take(cutIndex).ToList();
+            foreach (var msg in trimmedMessages)
             {
-                trimmedMessages = conversationMessages.Take(cutIndex).ToList();
-                foreach (var msg in trimmedMessages)
-                {
-                    if (string.IsNullOrWhiteSpace(msg.MessageId))
-                        msg.MessageId = Guid.NewGuid().ToString();
-                    _trimmedMessages[msg.MessageId] = msg;
-                }
-                conversationMessages = conversationMessages.Skip(cutIndex).ToList();
+                if (string.IsNullOrWhiteSpace(msg.MessageId))
+                    msg.MessageId = Guid.NewGuid().ToString();
+                _trimmedMessages[msg.MessageId] = msg;
             }
+            conversationMessages = [];
         }
 
         // ── 4. 归档被裁剪的消息（摘要 → 近期记忆 → 溢出巩固核心记忆）──
