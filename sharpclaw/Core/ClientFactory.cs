@@ -92,7 +92,7 @@ public static class ClientFactory
 
         return new VectorMemoryStore(
             CreateEmbeddingGenerator(config),
-            filePath: Path.Combine(Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "memories.json"),
+            filePath: Path.Combine(Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "memories.db"),
             rerankClient: CreateRerankClient(config));
     }
 }
