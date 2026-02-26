@@ -34,7 +34,7 @@ public class MainAgent
     private readonly ChatClientAgent _agent;
     private readonly IChatIO _chatIO;
     private readonly string _historyPath;
-    private readonly MemorySaver? _memorySaver;
+    private readonly SlidingWindowChatReducer _reducer;
     private InMemoryChatHistoryProvider? _historyProvider;
     private AgentSession? _session;
 
@@ -58,6 +58,7 @@ public class MainAgent
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
 
         MemoryRecaller? memoryRecaller = null;
+        MemorySaver? memorySaver = null;
         AIFunction[] memoryTools = [];
 
         if (memoryStore is not null)
@@ -71,7 +72,7 @@ public class MainAgent
             if (config.Agents.Saver.Enabled)
             {
                 var saverClient = ClientFactory.CreateAgentClient(config, config.Agents.Saver);
-                _memorySaver = new MemorySaver(saverClient, memoryStore);
+                memorySaver = new MemorySaver(saverClient, memoryStore);
             }
 
             memoryTools = CreateMemoryTools(memoryStore);
@@ -86,14 +87,15 @@ public class MainAgent
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
-        var reducer = new SlidingWindowChatReducer(
+        _reducer = new SlidingWindowChatReducer(
             windowSize: 20,
             systemPrompt: SystemPrompt,
-            archiver: archiver);
+            archiver: archiver,
+            memorySaver: memorySaver);
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
-            .UseChatReducer(reducer)
+            .UseChatReducer(_reducer)
             .BuildAIAgent(new ChatClientAgentOptions
             {
                 ChatOptions = new ChatOptions
@@ -104,7 +106,7 @@ public class MainAgent
                 ChatHistoryProviderFactory = (ctx, ct) =>
                 {
                     _historyProvider = new InMemoryChatHistoryProvider(
-                        reducer,
+                        _reducer,
                         ctx.SerializedState,
                         ctx.JsonSerializerOptions,
                         InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval
@@ -171,6 +173,7 @@ public class MainAgent
         };
 
         // 流式输出
+        _reducer.LatestUserInput = input;
         AppLogger.SetStatus("AI 思考中...");
         _chatIO.BeginAiResponse();
         var responseBuilder = new StringBuilder();
@@ -208,33 +211,9 @@ public class MainAgent
         }
         _chatIO.AppendChat("\n");
 
-        // 流式输出完成后，调用 MemorySaver 保存记忆
-        if (_memorySaver is not null)
-        {
-            try
-            {
-                var conversationLog = BuildConversationLog(input, responseBuilder.ToString());
-                await _memorySaver.SaveAsync(conversationLog, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[AutoSave] 记忆保存失败: {ex.Message}");
-            }
-        }
-
         // 持久化会话
         var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));
         File.WriteAllText(_historyPath, serialized);
-    }
-
-    private static List<string> BuildConversationLog(string userInput, string assistantResponse)
-    {
-        var log = new List<string>();
-        if (!string.IsNullOrWhiteSpace(userInput))
-            log.Add($"用户: {userInput}");
-        if (!string.IsNullOrWhiteSpace(assistantResponse))
-            log.Add($"助手: {assistantResponse}");
-        return log;
     }
 
     private static AIFunction[] CreateMemoryTools(IMemoryStore memoryStore)

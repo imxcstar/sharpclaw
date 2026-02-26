@@ -376,7 +376,7 @@ public class ConversationArchiver
         catch { return null; }
     }
 
-    private static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
+    public static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
     {
         var sb = new StringBuilder();
         foreach (var msg in messages)

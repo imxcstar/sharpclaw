@@ -66,19 +66,21 @@ public class MemorySaver
     }
 
     public async Task SaveAsync(
-        IReadOnlyList<string> conversationLog,
+        IReadOnlyList<ChatMessage> history,
+        string latestUserInput,
+        string? recentMemory = null,
+        string? primaryMemory = null,
         CancellationToken cancellationToken = default)
     {
-        if (conversationLog.Count == 0)
+        if (history.Count == 0)
             return;
 
         AppLogger.SetStatus("记忆保存中...");
-        // 拼接完整对话原文，供正则提取
-        var fullText = string.Join("\n", conversationLog);
+        // 格式化完整对话原文，供正则提取和提示构建
+        var fullText = ConversationArchiver.FormatMessages(history).ToString();
 
-        var recentText = string.Join(" ", conversationLog.TakeLast(4));
         var relatedMemories = await _memoryStore.SearchAsync(
-            recentText, SearchCount, cancellationToken);
+            latestUserInput, SearchCount, cancellationToken);
 
         // ── 定义工具 ──
 
@@ -146,11 +148,10 @@ public class MemorySaver
         var memoryCount = await _memoryStore.CountAsync(cancellationToken);
 
         var sb = new StringBuilder();
-        sb.AppendLine($"## 记忆库状态：已存 {memoryCount} 条，对话窗口剩余 {conversationLog.Count} 条记录");
+        sb.AppendLine($"## 记忆库状态：已存 {memoryCount} 条，对话窗口剩余 {history.Count} 条记录");
         sb.AppendLine();
         sb.AppendLine("## 最近对话内容");
-        foreach (var line in conversationLog)
-            sb.AppendLine(line);
+        sb.Append(fullText);
         sb.AppendLine();
 
         if (relatedMemories.Count > 0)
@@ -165,6 +166,20 @@ public class MemorySaver
         else
         {
             sb.AppendLine("## 无相关已有记忆");
+        }
+
+        if (!string.IsNullOrWhiteSpace(primaryMemory))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## 核心记忆（长期重要信息）");
+            sb.AppendLine(primaryMemory);
+        }
+
+        if (!string.IsNullOrWhiteSpace(recentMemory))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## 近期记忆（最近对话摘要）");
+            sb.AppendLine(recentMemory);
         }
 
         var options = new ChatOptions
