@@ -90,7 +90,7 @@ public class MainAgent
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
         _reducer = new MemoryPipelineChatReducer(
-            resetThreshold: 20,
+            resetThreshold: 30,
             systemPrompt: SystemPrompt,
             archiver: archiver,
             memorySaver: memorySaver);

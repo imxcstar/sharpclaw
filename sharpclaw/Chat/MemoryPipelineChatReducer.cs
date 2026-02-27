@@ -107,7 +107,7 @@ public class MemoryPipelineChatReducer : IChatReducer
         // ── 3. 溢出时清空对话并归档 ──
         ArchiveResult? archiveResult = null;
 
-        if (conversationMessages.Count > _resetThreshold)
+        if (conversationMessages.Sum(x => x.Contents.Count()) > _resetThreshold)
         {
             // 进入裁剪，清空累积的工作记忆
             OldWorkingMemoryContent = string.Empty;
