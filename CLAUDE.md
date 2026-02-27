@@ -19,9 +19,9 @@ No test project exists. Target framework is .NET 10 (`net10.0`).
 
 ## Configuration
 
-All settings live in `~/.sharpclaw/config.json`. Supports three providers: Anthropic, OpenAI, Gemini. Each sub-agent (main, recaller, saver, summarizer) can override the default provider/endpoint/model or inherit from `default`. A `channels` section configures per-frontend settings (TUI, Web listen address/port, QQ Bot credentials).
+All settings live in `~/.sharpclaw/config.json`. Supports three providers: Anthropic, OpenAI, Gemini. Each sub-agent (main, saver, summarizer) can override the default provider/endpoint/model or inherit from `default`. A `channels` section configures per-frontend settings (TUI, Web listen address/port, QQ Bot credentials).
 
-API keys are encrypted at rest with AES-256-CBC (`DataProtector`). The encryption key is stored in the OS credential manager via `KeyStore` (Windows Credential Manager / macOS Keychain / Linux libsecret). Config has auto-migration (current version 8, see `ConfigMigrator`).
+API keys are encrypted at rest with AES-256-CBC (`DataProtector`). The encryption key is stored in the OS credential manager via `KeyStore` (Windows Credential Manager / macOS Keychain / Linux libsecret). Config has auto-migration (current version 8, see `ConfigMigrator` inside `SharpclawConfig.cs`).
 
 See `Core/SharpclawConfig.cs` for the schema and `Core/ClientFactory.cs` for client instantiation.
 
@@ -49,18 +49,32 @@ All frontends share the same agent logic. `Abstractions/IAppLogger.cs` + `AppLog
 
 `Core/AgentBootstrap.Initialize()` is the shared bootstrap used by all channels: loads config, creates `TaskManager`, registers all command tools as `AIFunction[]`, creates `IMemoryStore`.
 
-### MainAgent and Memory Pipeline
+### MainAgent and Three-Tier Memory Pipeline
 
 `Agents/MainAgent.cs` owns the conversation loop. It takes `IChatIO` for I/O and wires up:
-- `MemoryRecaller` — recalls relevant memories before each turn, injects as system message (`AutoMemoryKey`)
-- `MemorySaver` — saves/updates/removes memories after each message (inside `SlidingWindowChatReducer`)
-- `ConversationSummarizer` — summarizes trimmed messages when sliding window overflows (`AutoSummaryKey`)
+- `MemorySaver` — after each turn, analyzes conversation and saves/updates/removes entries in the vector memory store (uses file tools + vector memory tools)
+- `ConversationArchiver` — when the sliding window overflows, runs a two-phase archive pipeline:
+  1. Summarizer Agent: reads `working_memory.md`, generates detailed summary → appends to `recent_memory.md`
+  2. Consolidator Agent: when `recent_memory.md` exceeds 30k chars, extracts core info → overwrites `primary_memory.md`, trims recent memory
+  3. Also saves trimmed messages as Markdown history files in `~/.sharpclaw/history/`
 
-Each sub-agent wraps its own `IChatClient` (via `ClientFactory.CreateAgentClient`) with `UseFunctionInvocation()` for tool calling.
+`Chat/MemoryPipelineChatReducer.cs` orchestrates the pipeline: strips old injected messages → triggers MemorySaver + ConversationArchiver on overflow → re-injects memory as system messages using `AdditionalProperties` keys (`AutoMemoryKey`, `AutoRecentMemoryKey`, `AutoPrimaryMemoryKey`, `AutoWorkingMemoryKey`).
+
+Each sub-agent wraps its own `IChatClient` (via `ClientFactory.CreateAgentClient`) with `UseFunctionInvocation()` for tool calling. Sub-agents use file command tools (cat, create, edit, append, etc.) to read/write memory files, with prompt-enforced write permissions per agent.
 
 The main agent also exposes `SearchMemory` and `GetRecentMemories` as tools the AI can call directly.
 
-### Memory Store
+### Memory Files (`~/.sharpclaw/`)
+
+| File | Purpose | Written by |
+|------|---------|------------|
+| `working_memory.md` | Current conversation snapshot (persisted each turn) | MainAgent |
+| `recent_memory.md` | Conversation summaries (append-only, trimmed on consolidation) | ConversationArchiver (Summarizer) |
+| `primary_memory.md` | Consolidated core memories (overwritten on consolidation) | ConversationArchiver (Consolidator) |
+| `history/*.md` | Archived full conversation history as Markdown | ConversationArchiver |
+| `memories.json` | Vector memory store (embeddings + metadata) | VectorMemoryStore |
+
+### Vector Memory Store
 
 `VectorMemoryStore` implements `IMemoryStore`:
 - Persists to `memories.json`
@@ -73,22 +87,34 @@ The main agent also exposes `SearchMemory` and `GetRecentMemories` as tools the 
 ### Command System (`Commands/`)
 
 Agent tools registered via `AIFunctionFactory.Create(delegate)`:
-- `FileCommands` — dir, cat, create, edit, rename, delete, find, search, mkdir, append
+- `FileCommands` — dir, cat, create, edit, rename, delete, find, search, mkdir, append, fileExists, getFileInfo
 - `ProcessCommands` — dotnet, nodejs, docker execution
 - `HttpCommands` — HTTP requests
 - `SystemCommands` — system info, exit
-- `TaskCommands` — background task management (status, read, wait, terminate, list, remove, stdin)
+- `TaskCommands` — background task management (status, read, wait, terminate, list, remove, stdin, closeStdin)
 
 All extend `CommandBase` which provides `RunProcess`/`RunNative` for foreground/background execution via `TaskManager`.
 
 ### Config Dialog (`UI/ConfigDialog.cs`)
 
-Terminal.Gui dialog with `TabView` pages: default provider, per-agent overrides (main/recaller/saver/summarizer), and vector memory settings (embedding + rerank). Replaces the old console-based `ConfigWizard`.
+Terminal.Gui dialog with `TabView` pages: default provider, per-agent overrides (main/saver/summarizer), and vector memory settings (embedding + rerank). Replaces the old console-based `ConfigWizard`.
+
+## Key Dependencies
+
+- `Microsoft.Agents.AI` / `Microsoft.Extensions.AI` — AI agent framework and chat client abstractions
+- `Anthropic`, `OpenAI`, `GeminiDotnet.Extensions.AI` — multi-provider support
+- `Terminal.Gui` v2 (develop) — TUI framework
+- `Luolan.QQBot` — QQ Bot SDK
+- `Sharc.Vector` (project reference from `sharc/`) — vector operations for memory store
+- `Microsoft.Data.Sqlite` — SQLite support
+- `ToonSharp` — Lua scripting engine
+- `Cronos` — cron expression parsing
 
 ## Conventions
 
 - Language: Chinese prompts and UI strings, English code identifiers
 - All sub-agents use tool calling (not text parsing) for structured output
-- Injected messages use `AdditionalProperties` dictionary keys (`AutoMemoryKey`, `AutoSummaryKey`) for identification and stripping
-- Session persistence: `history.json` (agent state), `memories.json` (vector memory store)
+- Sub-agents access memory files via standard file command tools, with prompt-level write restrictions (each agent can only write to its designated files)
+- Injected messages use `AdditionalProperties` dictionary keys for identification and stripping during reducer passes
+- Session persistence: `working_memory.md` (conversation state), `memories.json` (vector memory store), `recent_memory.md` / `primary_memory.md` (tiered memory)
 - WebSocket protocol: JSON messages with `type` field (`input`, `cancel`, `chat`, `chatLine`, `state`)
