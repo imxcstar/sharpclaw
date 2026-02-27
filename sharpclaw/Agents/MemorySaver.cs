@@ -28,9 +28,7 @@ public class MemorySaver
         string primaryMemoryPath,
         AIFunction[] fileTools)
     {
-        _client = new ChatClientBuilder(baseClient)
-            .UseFunctionInvocation()
-            .Build();
+        _client = baseClient;
         _memoryStore = memoryStore;
         _fileTools = fileTools;
 

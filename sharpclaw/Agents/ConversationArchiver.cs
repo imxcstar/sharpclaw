@@ -36,9 +36,7 @@ public class ConversationArchiver
         string primaryMemoryPath,
         AIFunction[] tools)
     {
-        _client = new ChatClientBuilder(client)
-            .UseFunctionInvocation()
-            .Build();
+        _client = client;
         _workingMemoryPath = workingMemoryPath;
         _recentMemoryPath = recentMemoryPath;
         _primaryMemoryPath = primaryMemoryPath;
@@ -85,11 +83,18 @@ public class ConversationArchiver
             - 忽略纯寒暄、重复确认等零信息量内容
             - 工具调用保留调用目的和关键结果，省略冗长的原始输出
 
-            ## 注意
+            ## 去重要求
+
+            - 写入前必须先读取近期记忆文件，检查是否已有相同或高度相似的内容
+            - 如果某条信息已经在近期记忆中存在（即使措辞不同但语义相同），不要重复写入
+            - 只写入真正新增的、尚未被近期记忆记录的信息
+            - 如果对话中的所有有意义信息都已被近期记忆覆盖，则不需要写入任何内容
+
+            ## 写入方式
 
             - 摘要必须写入近期记忆文件，不要只输出文本
-            - 如果对话内容有任何有意义的信息，无论其他记忆文件中是否已有相同或类似内容，都必须写入近期记忆
-            - 只有对话内容完全没有任何有意义信息时，才可以不保存
+            - 使用追加工具写入时，不要一次性输出全部内容，应分块多次追加，每次追加一小段
+            - 只有对话内容完全没有新增有意义信息时，才可以不保存
             """;
 
         _consolidatorPrompt = $"""
