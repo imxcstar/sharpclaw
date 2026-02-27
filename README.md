@@ -1,5 +1,7 @@
 # 🐾 Sharpclaw
 
+[中文版](README_CN.md)
+
 Sharpclaw is an advanced, highly capable AI assistant framework built on **.NET 10**. Its core distinctiveness lies in its robust **cross-conversation long-term memory system** and **system-level operation capabilities**.
 
 By leveraging the `Microsoft.Extensions.AI` abstraction layer, Sharpclaw seamlessly integrates with multiple LLM providers (Anthropic, OpenAI, Gemini) and interacts with users through multiple frontend channels including a Terminal UI (TUI), a Web interface, and QQ Bots.
