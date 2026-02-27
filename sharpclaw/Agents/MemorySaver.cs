@@ -1,7 +1,8 @@
 using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI;
 using System.ComponentModel;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 
 using sharpclaw.Memory;
 using sharpclaw.UI;
@@ -9,135 +10,159 @@ using sharpclaw.UI;
 namespace sharpclaw.Agents;
 
 /// <summary>
-/// 主动记忆助手：每轮对话后，先检索相关记忆，再通过工具调用决定保存/更新/删除。
-/// 工具支持正则模板：content 中用 {0},{1}... 占位，patterns 数组提供正则从原文提取内容填充。
+/// 自主记忆助手：每轮对话后，通过工具自主查询已有记忆，决定保存/更新/删除。
+/// 可访问所有记忆文件（只读参考），仅对向量记忆库有读写权限。
 /// </summary>
 public class MemorySaver
 {
-    private static readonly string AgentPrompt = """
-        你是一个记忆管理助手。分析对话内容，结合已有记忆，决定如何管理记忆库。
-
-        流程：
-        1. 查看最近对话内容和当前记忆库状态
-        2. 查看系统检索到的相关已有记忆
-        3. 重点检查：对话中是否有重要信息尚未保存到记忆库？
-        4. 使用工具执行操作：保存新记忆 / 更新已有记忆 / 删除过时记忆
-
-        重要：
-        - "最近对话内容"只是聊天记录，不代表这些内容已经保存到记忆库中
-        - 只有"相关已有记忆"部分列出的才是记忆库中实际存在的记忆
-        - 判断是否需要保存时，以"相关已有记忆"为准，不要因为对话中提到过就认为已经记住了
-        - 对话窗口有大小限制，较早的对话会被裁剪丢失。如果对话中有重要但尚未保存的信息，应尽快保存，否则窗口滑动后这些信息将永久丢失
-
-        值得记忆的信息类型：
-        - fact: 事实（姓名、职业、项目信息等）
-        - preference: 偏好（喜好、习惯、风格等）
-        - decision: 决策或结论
-        - todo: 待办事项、计划
-        - lesson: 经验教训、技术要点
-
-        工具的 content 参数支持两种写法：
-        1. 直接写完整内容，patterns 传空数组：content="用户喜欢xx", patterns=[]
-        2. 模板 + 正则提取：content 中用 {0},{1},... 作为占位符，patterns 数组中对应位置的正则表达式会从对话原文中提取第一个捕获组的内容填入
-           例如：content="用户的名字叫{0}", patterns=["我叫(\\S+)"]
-           系统会用正则在对话原文中匹配，将捕获组的值替换 {0}
-           这样可以精确引用原文内容，避免转述错误
-
-        注意：
-        - 优先保存对话中尚未存入记忆库的重要信息，避免窗口裁剪后丢失
-        - 如果已有记忆中有相关但过时的信息，用更新工具而非重复保存
-        - 如果已有记忆完全准确且无需变更，不要重复操作
-        - 如果对话中没有值得记忆的信息，不调用任何工具
-        - 记忆内容应该是独立的、自包含的，脱离对话上下文也能理解
-        - 每次最多操作 3 条记忆
-        """;
-
     private readonly IChatClient _client;
     private readonly IMemoryStore _memoryStore;
+    private readonly AIFunction[] _fileTools;
+    private readonly string _agentPrompt;
 
-    public int SearchCount { get; set; } = 10;
-
-    public MemorySaver(IChatClient baseClient, IMemoryStore memoryStore)
+    public MemorySaver(
+        IChatClient baseClient,
+        IMemoryStore memoryStore,
+        string workingMemoryPath,
+        string recentMemoryPath,
+        string primaryMemoryPath,
+        AIFunction[] fileTools)
     {
-        _client = new ChatClientBuilder(baseClient)
-            .UseFunctionInvocation()
-            .Build();
+        _client = baseClient;
         _memoryStore = memoryStore;
+        _fileTools = fileTools;
+
+        _agentPrompt = $"""
+            你是一个记忆管理助手。分析最近对话内容，自主查询记忆库，决定如何管理记忆。
+
+            ## 可用的记忆源
+
+            | 记忆类型 | 位置 | 权限 |
+            |---------|------|------|
+            | 工作记忆（上次对话快照） | {workingMemoryPath} | 只读 |
+            | 近期记忆（对话摘要） | {recentMemoryPath} | 只读 |
+            | 核心记忆（长期重要信息） | {primaryMemoryPath} | 只读 |
+            | 向量记忆（细粒度记忆条目） | 通过 SearchMemory / GetRecentMemories / SaveMemory / UpdateMemory / RemoveMemory 管理 | 读写 |
+
+            **重要：你只能通过工具管理向量记忆库，其他记忆文件仅供参考，禁止修改。**
+
+            ## 流程
+
+            1. 阅读下方提供的最近对话内容，识别其中值得记忆的重要信息
+            2. 可选：读取其他记忆文件作为参考，了解已有上下文
+            3. 如果发现值得记忆的信息，先搜索向量记忆库中是否已有相关记忆
+            4. 根据搜索结果决定操作：
+               - 记忆库中无相关记忆 → 保存新记忆
+               - 记忆库中有相关但过时/不完整的记忆 → 更新
+               - 记忆库中有完全过时的记忆 → 删除
+               - 记忆库中已有准确的记忆 → 不操作
+            5. 如果对话中没有值得记忆的信息，不调用任何工具
+
+            ## 值得记忆的信息类型
+
+            - fact: 事实（姓名、职业、项目信息等）
+            - preference: 偏好（喜好、习惯、风格等）
+            - decision: 决策或结论
+            - todo: 待办事项、计划
+            - lesson: 经验教训、技术要点
+
+            ## 注意
+
+            - 保存前务必先搜索向量记忆库，避免库内重复保存
+            - 可以多次搜索不同关键词，确保全面检查
+            - 有值得记忆的信息时，无论其他记忆文件中是否已有相同或类似内容，都必须保存到向量记忆库
+            - 记忆内容应独立、自包含，脱离对话上下文也能理解
+            - 关注用户透露的事实、偏好、决策，以及 AI 执行的重要操作和结果
+            """;
     }
 
     public async Task SaveAsync(
-        IReadOnlyList<string> conversationLog,
+        IReadOnlyList<ChatMessage> history,
+        string userInput,
         CancellationToken cancellationToken = default)
     {
-        if (conversationLog.Count == 0)
+        if (history.Count == 0)
             return;
 
         AppLogger.SetStatus("记忆保存中...");
-        // 拼接完整对话原文，供正则提取
-        var fullText = string.Join("\n", conversationLog);
+        var fullText = FormatMessages(history).ToString();
 
-        var recentText = string.Join(" ", conversationLog.TakeLast(4));
-        var relatedMemories = await _memoryStore.SearchAsync(
-            recentText, SearchCount, cancellationToken);
+        // ── 向量记忆工具 ──
 
-        // ── 定义工具 ──
+        [Description("搜索向量记忆库，查找与查询相关的已有记忆。保存或更新前应先搜索，避免重复。")]
+        async Task<string> SearchMemory(
+            [Description("搜索关键词或语义查询")] string query,
+            [Description("最多返回几条结果")] int count = 5)
+        {
+            var results = await _memoryStore.SearchAsync(query, Math.Min(count, 10), cancellationToken);
+            if (results.Count == 0)
+                return "未找到相关记忆。";
 
-        [Description("保存一条新的记忆到记忆库。content 支持 {0},{1},... 占位符，配合 patterns 正则数组从对话原文中提取内容填充。")]
+            var sb = new StringBuilder();
+            sb.AppendLine($"找到 {results.Count} 条相关记忆：");
+            foreach (var m in results)
+                sb.AppendLine($"- ID={m.Id} [{m.Category}](重要度:{m.Importance}) {m.Content}");
+            return sb.ToString();
+        }
+
+        [Description("查看最近保存的向量记忆，了解记忆库近况。")]
+        async Task<string> GetRecentMemories(
+            [Description("返回最近几条记忆")] int count = 5)
+        {
+            var results = await _memoryStore.GetRecentAsync(Math.Min(count, 10), cancellationToken);
+            if (results.Count == 0)
+                return "记忆库为空。";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"最近 {results.Count} 条记忆：");
+            foreach (var m in results)
+                sb.AppendLine($"- ID={m.Id} [{m.Category}](重要度:{m.Importance}) {m.Content}");
+            return sb.ToString();
+        }
+
+        [Description("保存一条新的记忆到向量记忆库。")]
         async Task<string> SaveMemory(
-            [Description("记忆内容模板。可直接写完整内容，或用 {0},{1},... 占位符配合 patterns 提取原文")] string content,
+            [Description("记忆内容，应独立自包含")] string content,
             [Description("类别：fact/preference/decision/todo/lesson")] string category,
             [Description("重要度 1-10")] int importance,
-            [Description("关键词列表")] string[] keywords,
-            [Description("正则表达式数组，按顺序对应 {0},{1},... 占位符。每个正则需包含一个捕获组。不需要提取时传空数组")] string[] patterns)
+            [Description("关键词列表")] string[] keywords)
         {
-            var resolvedContent = ResolveTemplate(content, patterns, fullText);
-            if (resolvedContent is null)
-                return $"正则匹配失败，未能提取内容";
-
             var entry = new MemoryEntry
             {
-                Content = resolvedContent,
+                Content = content,
                 Category = category,
                 Importance = Math.Clamp(importance, 1, 10),
                 Keywords = keywords.ToList()
             };
             await _memoryStore.AddAsync(entry, cancellationToken);
-            AppLogger.Log($"[AutoSave] 新增: [{category}](重要度:{importance}) {resolvedContent}");
-            return $"已保存: {resolvedContent}";
+            return $"已保存: {content}";
         }
 
-        [Description("更新记忆库中已有的一条记忆。content 支持 {0},{1},... 占位符，配合 patterns 正则数组从对话原文中提取内容填充。")]
+        [Description("更新向量记忆库中已有的一条记忆。")]
         async Task<string> UpdateMemory(
             [Description("要更新的记忆 ID")] string id,
-            [Description("新的记忆内容模板。可直接写完整内容，或用 {0},{1},... 占位符配合 patterns 提取原文")] string content,
+            [Description("新的记忆内容")] string content,
             [Description("类别：fact/preference/decision/todo/lesson")] string category,
             [Description("重要度 1-10")] int importance,
-            [Description("关键词列表")] string[] keywords,
-            [Description("正则表达式数组，按顺序对应 {0},{1},... 占位符。每个正则需包含一个捕获组。不需要提取时传空数组")] string[] patterns)
+            [Description("关键词列表")] string[] keywords)
         {
-            var resolvedContent = ResolveTemplate(content, patterns, fullText);
-            if (resolvedContent is null)
-                return $"正则匹配失败，未能提取内容";
-
             var entry = new MemoryEntry
             {
                 Id = id,
-                Content = resolvedContent,
+                Content = content,
                 Category = category,
                 Importance = Math.Clamp(importance, 1, 10),
                 Keywords = keywords.ToList()
             };
             await _memoryStore.UpdateAsync(entry, cancellationToken);
-            AppLogger.Log($"[AutoSave] 更新 {id}: [{category}](重要度:{importance}) {resolvedContent}");
-            return $"已更新: {resolvedContent}";
+            return $"已更新: {content}";
         }
 
-        [Description("从记忆库中删除一条过时的记忆")]
+        [Description("从向量记忆库中删除一条过时的记忆。")]
         async Task<string> RemoveMemory(
             [Description("要删除的记忆 ID")] string id)
         {
             await _memoryStore.RemoveAsync(id, cancellationToken);
-            AppLogger.Log($"[AutoSave] 删除: {id}");
             return $"已删除: {id}";
         }
 
@@ -145,85 +170,99 @@ public class MemorySaver
 
         var memoryCount = await _memoryStore.CountAsync(cancellationToken);
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"## 记忆库状态：已存 {memoryCount} 条，对话窗口剩余 {conversationLog.Count} 条记录");
-        sb.AppendLine();
-        sb.AppendLine("## 最近对话内容");
-        foreach (var line in conversationLog)
-            sb.AppendLine(line);
-        sb.AppendLine();
+        var sb2 = new StringBuilder();
+        sb2.AppendLine($"## 向量记忆库状态：已存 {memoryCount} 条");
+        sb2.AppendLine();
+        sb2.AppendLine("## 用户本轮输入");
+        sb2.AppendLine();
+        sb2.AppendLine(userInput);
+        sb2.AppendLine();
+        sb2.AppendLine("## 最近对话内容");
+        sb2.AppendLine();
+        sb2.Append(fullText);
 
-        if (relatedMemories.Count > 0)
-        {
-            sb.AppendLine("## 相关已有记忆");
-            for (var i = 0; i < relatedMemories.Count; i++)
-            {
-                var m = relatedMemories[i];
-                sb.AppendLine($"[{i + 1}] ID={m.Id} [{m.Category}](重要度:{m.Importance}) {m.Content}");
-            }
-        }
-        else
-        {
-            sb.AppendLine("## 无相关已有记忆");
-        }
+        AIFunction[] vectorTools =
+        [
+            AIFunctionFactory.Create(SearchMemory),
+            AIFunctionFactory.Create(GetRecentMemories),
+            AIFunctionFactory.Create(SaveMemory),
+            AIFunctionFactory.Create(UpdateMemory),
+            AIFunctionFactory.Create(RemoveMemory),
+        ];
 
         var options = new ChatOptions
         {
-            Instructions = AgentPrompt,
-            Tools =
-            [
-                AIFunctionFactory.Create(SaveMemory),
-                AIFunctionFactory.Create(UpdateMemory),
-                AIFunctionFactory.Create(RemoveMemory),
-            ]
+            Instructions = _agentPrompt,
+            Tools = [.. _fileTools, .. vectorTools]
         };
 
-        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new Microsoft.Agents.AI.ChatClientAgentOptions()
+        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new ChatClientAgentOptions()
         {
             ChatOptions = options
         });
 
-        var ret = await agent.RunAsync(new ChatMessage(ChatRole.User, sb.ToString()), cancellationToken: cancellationToken);
-        AppLogger.Log($"[AutoSave] 完成: {ret.Text}");
+        await RunAgentStreamingAsync(agent,
+            new ChatMessage(ChatRole.User, sb2.ToString()),
+            "MemorySaver", cancellationToken);
     }
 
-    /// <summary>
-    /// 将模板中的 {0},{1},... 占位符用正则从原文中提取的捕获组替换。
-    /// patterns 为空时直接返回 content。任一正则匹配失败返回 null。
-    /// </summary>
-    private static string? ResolveTemplate(string content, string[] patterns, string fullText)
+    private static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
     {
-        if (patterns.Length == 0)
-            return content;
-
-        var values = new string[patterns.Length];
-        for (var i = 0; i < patterns.Length; i++)
+        var sb = new StringBuilder();
+        foreach (var msg in messages)
         {
-            try
+            if (msg.Role == ChatRole.User)
             {
-                var match = Regex.Match(fullText, patterns[i]);
-                if (!match.Success || match.Groups.Count < 2)
+                var text = string.Join("", msg.Contents.OfType<TextContent>()
+                    .Where(t => !string.IsNullOrWhiteSpace(t.Text))
+                    .Select(t => t.Text.Trim()));
+                if (!string.IsNullOrWhiteSpace(text))
+                    sb.Append($"### 用户\n\n{text}\n\n");
+                continue;
+            }
+
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
                 {
-                    AppLogger.Log($"[AutoSave] 正则 [{i}] 匹配失败: {patterns[i]}");
-                    return null;
+                    case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
+                        sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
+                        break;
+                    case FunctionCallContent call:
+                        var args = call.Arguments is not null
+                            ? JsonSerializer.Serialize(call.Arguments)
+                            : "";
+                        sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
+                        break;
+                    case FunctionResultContent result:
+                        var resultText = result.Result?.ToString() ?? "";
+                        if (maxResultLength.HasValue && resultText.Length > maxResultLength)
+                            resultText = resultText[..maxResultLength.Value] + "...";
+                        sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
+                        break;
                 }
-                values[i] = match.Groups[1].Value;
-            }
-            catch (RegexParseException ex)
-            {
-                AppLogger.Log($"[AutoSave] 正则 [{i}] 解析错误: {ex.Message}");
-                return null;
             }
         }
+        return sb;
+    }
 
-        try
+    private static async Task RunAgentStreamingAsync(
+        ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
+    {
+        var session = await agent.CreateSessionAsync();
+
+        await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
         {
-            return string.Format(content, values);
-        }
-        catch (FormatException)
-        {
-            // 占位符数量与 values 不匹配，回退直接返回模板
-            return content;
+            foreach (var content in update.Contents)
+            {
+                switch (content)
+                {
+                    case FunctionCallContent call:
+                        AppLogger.SetStatus($"[{logPrefix}]调用工具: {call.Name}");
+                        AppLogger.Log($"[{logPrefix}]调用工具: {call.Name}");
+                        break;
+                }
+            }
         }
     }
 }

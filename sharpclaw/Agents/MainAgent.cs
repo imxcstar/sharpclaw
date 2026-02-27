@@ -12,13 +12,19 @@ using System.Text.Json;
 namespace sharpclaw.Agents;
 
 /// <summary>
-/// 主智能体：集成记忆管线（保存、回忆、总结）和命令工具，通过 ChatWindow 进行 I/O。
+/// 主智能体：集成记忆管线（保存、回忆、总结、主要记忆）和命令工具，通过 ChatWindow 进行 I/O。
 /// </summary>
 public class MainAgent
 {
     private static readonly string SystemPrompt = """
-        你是一个智能助手，拥有长期记忆能力。
+        你是 Sharpclaw，一个拥有长期记忆和系统操作能力的 AI 助手。
 
+        你的核心能力：
+        - 长期记忆：你能跨对话记住用户的偏好、事实、决策等重要信息，不会因为对话窗口滑动而遗忘
+        - 系统操作：你可以执行文件管理、运行程序、发起网络请求等操作，帮助用户完成实际任务
+        - 任务管理：你可以在后台运行长时间任务，并随时查看进度
+
+        关于记忆系统：
         - 系统会自动记录对话中的重要信息到记忆库，你无需手动保存
         - 系统会自动注入相关记忆到上下文中，你可以直接参考这些信息
         - 当你需要主动搜索记忆时，可以使用 SearchMemory 工具
@@ -27,72 +33,89 @@ public class MainAgent
 
     private readonly ChatClientAgent _agent;
     private readonly IChatIO _chatIO;
-    private readonly string _historyPath;
+    private readonly string _workingMemoryPath;
+    private readonly MemoryPipelineChatReducer _reducer;
+    private InMemoryChatHistoryProvider? _historyProvider;
     private AgentSession? _session;
 
     public MainAgent(
         SharpclawConfig config,
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
-        IChatIO chatIO,
-        string historyPath = "history.json")
+        IChatIO chatIO)
     {
-        _historyPath = historyPath;
+        _workingMemoryPath = Path.Combine(
+            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "working_memory.md");
         _chatIO = chatIO;
+
+        // 主要记忆文件路径
+        var sharpclawDir = Path.GetDirectoryName(SharpclawConfig.ConfigPath)!;
+        var recentMemoryPath = Path.Combine(sharpclawDir, "recent_memory.md");
+        var primaryMemoryPath = Path.Combine(sharpclawDir, "primary_memory.md");
 
         // 按智能体创建各自的 AI 客户端
         var mainClient = ClientFactory.CreateAgentClient(config, config.Agents.Main);
 
         MemorySaver? memorySaver = null;
-        MemoryRecaller? memoryRecaller = null;
         AIFunction[] memoryTools = [];
+
+        var fileToolNames = new HashSet<string>
+        {
+            "CommandCat", "CommandCreateText", "AppendToFile",
+            "FileExists", "CommandDir", "CommandEditText", "SearchInFiles"
+        };
+        var fileTools = commandSkills.Where(t => fileToolNames.Contains(t.Name)).ToArray();
 
         if (memoryStore is not null)
         {
-            if (config.Agents.Recaller.Enabled)
-            {
-                var recallerClient = ClientFactory.CreateAgentClient(config, config.Agents.Recaller);
-                memoryRecaller = new MemoryRecaller(recallerClient, memoryStore);
-            }
-
             if (config.Agents.Saver.Enabled)
             {
                 var saverClient = ClientFactory.CreateAgentClient(config, config.Agents.Saver);
-                memorySaver = new MemorySaver(saverClient, memoryStore);
+                memorySaver = new MemorySaver(saverClient, memoryStore,
+                    _workingMemoryPath, recentMemoryPath, primaryMemoryPath, fileTools);
             }
 
             memoryTools = CreateMemoryTools(memoryStore);
         }
 
-        ConversationSummarizer? summarizer = null;
+        ConversationArchiver? archiver = null;
         if (config.Agents.Summarizer.Enabled)
         {
-            var summarizerClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
-            summarizer = new ConversationSummarizer(summarizerClient);
+            var archiverClient = ClientFactory.CreateAgentClient(config, config.Agents.Summarizer);
+            AIFunction[] archiverTools = [.. fileTools, .. memoryTools];
+            archiver = new ConversationArchiver(
+                archiverClient, _workingMemoryPath, recentMemoryPath, primaryMemoryPath, archiverTools);
         }
 
         AIFunction[] tools = [.. memoryTools, .. commandSkills];
 
-        var reducer = new SlidingWindowChatReducer(
-            windowSize: 20,
+        _reducer = new MemoryPipelineChatReducer(
+            resetThreshold: 30,
             systemPrompt: SystemPrompt,
-            memorySaver: memorySaver,
-            summarizer: summarizer);
+            archiver: archiver,
+            memorySaver: memorySaver);
+        _reducer.WorkingMemoryPath = _workingMemoryPath;
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
+            .UseChatReducer(_reducer)
             .BuildAIAgent(new ChatClientAgentOptions
             {
-                ChatOptions = new ChatOptions { Tools = tools },
-                ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(
-                    new InMemoryChatHistoryProvider(
-                        reducer,
+                ChatOptions = new ChatOptions
+                {
+                    Instructions = SystemPrompt,
+                    Tools = tools
+                },
+                ChatHistoryProviderFactory = (ctx, ct) =>
+                {
+                    _historyProvider = new InMemoryChatHistoryProvider(
+                        _reducer,
                         ctx.SerializedState,
                         ctx.JsonSerializerOptions,
-                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.AfterMessageAdded)),
-                AIContextProviderFactory = memoryRecaller is not null
-                    ? (ctx, ct) => new ValueTask<AIContextProvider>(memoryRecaller)
-                    : null
+                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval
+                    );
+                    return new ValueTask<ChatHistoryProvider>(_historyProvider);
+                }
             });
     }
 
@@ -103,10 +126,14 @@ public class MainAgent
     {
         await _chatIO.WaitForReadyAsync();
 
-        _session = File.Exists(_historyPath)
-            ? await _agent.DeserializeSessionAsync(
-                JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(_historyPath)))
-            : await _agent.CreateSessionAsync();
+        _session = await _agent.CreateSessionAsync();
+        if (File.Exists(_workingMemoryPath))
+        {
+            _reducer.OldWorkingMemoryContent = File.ReadAllText(_workingMemoryPath);
+
+            if (!string.IsNullOrWhiteSpace(_reducer.OldWorkingMemoryContent))
+                _reducer.WorkingMemoryBuffer.Append(_reducer.OldWorkingMemoryContent + "\n\n---\n\n");
+        }
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -149,10 +176,30 @@ public class MainAgent
             new(ChatRole.User, input)
         };
 
+        var buffer = new StringBuilder();
+        string? bufferType = null;
+        void Flush()
+        {
+            if (buffer.Length == 0) return;
+            AppLogger.Log($"[Main]: {buffer}");
+            buffer.Clear();
+            bufferType = null;
+        }
+
+        void Append(string type, string text)
+        {
+            if (bufferType != type)
+                Flush();
+            bufferType = type;
+            buffer.Append(text);
+        }
+
         // 流式输出
+        _reducer.UserInput = input;
+        _reducer.WorkingMemoryBuffer.Append($"### 用户\n\n{input}\n\n");
+        AIContent? lastContent = null;
         AppLogger.SetStatus("AI 思考中...");
         _chatIO.BeginAiResponse();
-        var responseBuilder = new StringBuilder();
         try
         {
             await foreach (var update in _agent.RunStreamingAsync(inputMessages, _session!).WithCancellation(aiToken))
@@ -163,20 +210,24 @@ public class MainAgent
                     {
                         case TextContent text:
                             _chatIO.AppendChat(text.Text);
-                            responseBuilder.Append(text.Text);
+                            if (lastContent is not TextContent)
+                                _reducer.WorkingMemoryBuffer.Append("### 助手\n\n");
+                            _reducer.WorkingMemoryBuffer.Append(text.Text);
                             break;
                         case TextReasoningContent reasoning:
-                            AppLogger.Log($"[Reasoning] {reasoning.Text}");
+                            AppLogger.SetStatus($"[Main]思考中...");
+                            Append("Reasoning", reasoning.Text);
                             break;
                         case FunctionCallContent call:
-                            AppLogger.SetStatus($"调用工具: {call.Name}");
-                            AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                            AppLogger.SetStatus($"[Main]调用工具: {call.Name}");
+                            AppLogger.Log($"[Main]调用工具: {call.Name}");
+                            _reducer.WorkingMemoryBuffer.Append($"\n\n#### 工具调用: {call.Name}\n\n");
                             break;
                         case FunctionResultContent result:
-                            AppLogger.Log($"[Result({result.CallId})] {JsonSerializer.Serialize(result.Result)}");
-                            AppLogger.SetStatus("AI 思考中...");
+                            _reducer.WorkingMemoryBuffer.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{result.Result?.ToString() ?? ""}\n```\n\n</details>\n\n");
                             break;
                     }
+                    lastContent = content;
                 }
             }
         }
@@ -186,10 +237,17 @@ public class MainAgent
             return;
         }
         _chatIO.AppendChat("\n");
+        _reducer.WorkingMemoryBuffer.Append("\n\n---\n\n");
 
-        // 持久化会话
-        var serialized = JsonSerializer.Serialize(await _agent.SerializeSessionAsync(_session!));
-        File.WriteAllText(_historyPath, serialized);
+        // 持久化工作记忆
+        try
+        {
+            File.WriteAllText(_workingMemoryPath, _reducer.WorkingMemoryBuffer.ToString());
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[WorkingMemory] 保存失败: {ex.Message}");
+        }
     }
 
     private static AIFunction[] CreateMemoryTools(IMemoryStore memoryStore)

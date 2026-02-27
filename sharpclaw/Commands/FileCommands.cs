@@ -16,7 +16,7 @@ namespace sharpclaw.Commands;
 /// </summary>
 public class FileCommands : CommandBase
 {
-    private const int CatReadPageLines = 50;
+    private const int CatReadPageLines = 500;
 
     public FileCommands(TaskManager taskManager)
         : base(taskManager)
@@ -483,7 +483,7 @@ public class FileCommands : CommandBase
         );
     }
 
-    [Description("Read file contents with pagination (50 lines per page)")]
+    [Description("Read file contents with pagination (500 lines per page)")]
     public string CommandCat(
         [Description("File path to read")] string filePath,
         [Description("Starting line number (1-based)")] int fromLine = 1,

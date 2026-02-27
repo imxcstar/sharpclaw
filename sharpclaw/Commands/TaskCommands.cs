@@ -130,7 +130,6 @@ public class TaskCommands : CommandBase
 
         var moreLine = hasMoreNow ? "\n--more--" : string.Empty;
 
-        AppLogger.Log("------------[Log]---------------");
         var ret = $"""
 ok: true
 taskId: {taskId}
@@ -143,8 +142,6 @@ chunkLength: {chunk.Length}
 cleanedUp: {cleanedUp}
 chunk: {chunk}{moreLine}
 """;
-        AppLogger.Log(ret);
-        AppLogger.Log("------------[Log]---------------");
         return ret;
     }
 

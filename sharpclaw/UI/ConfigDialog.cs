@@ -133,8 +133,8 @@ public sealed class ConfigDialog : Dialog
         _memoryEnabledCheck.ValueChanged += OnMemoryEnabledChanged;
         y += 2;
 
-        var embEndpointLabel = new Label { Text = "Embedding:", X = 1, Y = y };
-        _embeddingEndpointField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = "https://dashscope.aliyuncs.com/compatible-mode/v1" };
+        var embEndpointLabel = new Label { Text = "Embedding Endpoint:", X = 1, Y = y };
+        _embeddingEndpointField = new TextField { X = 22, Y = y, Width = Dim.Fill(2), Text = "https://dashscope.aliyuncs.com/compatible-mode/v1" };
         _embeddingViews.AddRange([embEndpointLabel, _embeddingEndpointField]);
         y += 2;
 
@@ -153,8 +153,8 @@ public sealed class ConfigDialog : Dialog
         _embeddingViews.Add(_rerankEnabledCheck);
         y += 2;
 
-        var rerankEndpointLabel = new Label { Text = "Rerank:", X = 1, Y = y };
-        _rerankEndpointField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks" };
+        var rerankEndpointLabel = new Label { Text = "Rerank Endpoint:", X = 1, Y = y };
+        _rerankEndpointField = new TextField { X = 22, Y = y, Width = Dim.Fill(2), Text = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks" };
         _rerankViews.AddRange([rerankEndpointLabel, _rerankEndpointField]);
         y += 2;
 
@@ -166,10 +166,13 @@ public sealed class ConfigDialog : Dialog
         var rerankModelLabel = new Label { Text = "Rrk 模型:", X = 1, Y = y };
         _rerankModelField = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = "qwen3-vl-rerank" };
         _rerankViews.AddRange([rerankModelLabel, _rerankModelField]);
+        y += 2;
 
         memoryView.Add(_memoryEnabledCheck);
         foreach (var v in _embeddingViews) memoryView.Add(v);
         foreach (var v in _rerankViews) memoryView.Add(v);
+
+        EnableVerticalScroll(memoryView, y);
 
         tabView.AddTab(CreateTab(tabView, "向量记忆", memoryView), false);
 
