@@ -104,6 +104,9 @@ public static class QQBotServer
         Console.WriteLine("[QQBot] 正在停止...");
         await bot.StopAsync();
         await agentTask;
+
+        // 清理所有后台任务
+        bootstrap.TaskManager.Dispose();
     }
 
     /// <summary>

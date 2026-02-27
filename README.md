@@ -17,7 +17,7 @@ By leveraging the `Microsoft.Extensions.AI` abstraction layer, Sharpclaw seamles
 
 * **🛠️ System Operation Capabilities (Tools/Commands):**
   * **File System:** Comprehensive file operations including searching, reading, appending, editing, and directory management.
-  * **Process & Task Management:** Execute native OS commands, external processes, HTTP requests, and manage background tasks with a built-in multi-tier timing wheel scheduler.
+  * **Process & Task Management:** Execute native OS commands, external processes, HTTP requests, and manage background tasks. Tasks support foreground (blocking) and background modes, with full lifecycle management including output streaming (stdout/stderr/combined), stdin writing, keyword/regex-based output waiting, and process tree termination. All background tasks are automatically killed and cleaned up on application exit.
 
 * **📱 Multi-Channel Support:**
   * **TUI (Terminal.Gui):** A feature-rich terminal interface with collapsible logs, slash-command auto-completion, and configuration dialogs.
@@ -27,6 +27,7 @@ By leveraging the `Microsoft.Extensions.AI` abstraction layer, Sharpclaw seamles
 * **🔒 Secure Configuration:**
   * Cross-platform secure credential storage (Windows Credential Manager, macOS Keychain, Linux libsecret) using AES-256-CBC encryption for API keys.
   * Automatic configuration version migration (up to v8).
+  * Per-provider custom request body injection (e.g. `"thinking"`, `"reasoning_split"`) — configurable globally or per-agent via the Config Dialog.
 
 ## 🚀 Getting Started
 

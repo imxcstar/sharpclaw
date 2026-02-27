@@ -13,6 +13,7 @@ public static class AgentBootstrap
 {
     public record BootstrapResult(
         SharpclawConfig Config,
+        TaskManager TaskManager,
         AIFunction[] CommandSkills,
         IMemoryStore? MemoryStore);
 
@@ -47,9 +48,7 @@ public static class AgentBootstrap
 
             httpCommands.CommandHttp,
 
-            processCommands.CommandDotnet,
-            processCommands.CommandNodejs,
-            processCommands.CommandDocker,
+            processCommands.CommandPowershell,
 
             taskCommands.TaskGetStatus,
             taskCommands.TaskRead,
@@ -65,6 +64,6 @@ public static class AgentBootstrap
 
         var memoryStore = ClientFactory.CreateMemoryStore(config);
 
-        return new BootstrapResult(config, commandSkills, memoryStore);
+        return new BootstrapResult(config, taskManager, commandSkills, memoryStore);
     }
 }

@@ -50,6 +50,7 @@ public class TaskManager
     {
         foreach (var task in _tasks.Values)
         {
+            try { task.TryKillTree(); } catch { }
             try { task.Dispose(); } catch { }
         }
         _tasks.Clear();

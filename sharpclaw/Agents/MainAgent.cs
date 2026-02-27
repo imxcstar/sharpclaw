@@ -221,7 +221,10 @@ public class MainAgent
                         case FunctionCallContent call:
                             AppLogger.SetStatus($"[Main]调用工具: {call.Name}");
                             AppLogger.Log($"[Main]调用工具: {call.Name}");
-                            _reducer.WorkingMemoryBuffer.Append($"\n\n#### 工具调用: {call.Name}\n\n");
+                            var args = call.Arguments is not null
+                                ? JsonSerializer.Serialize(call.Arguments)
+                                : "";
+                            _reducer.WorkingMemoryBuffer.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
                             break;
                         case FunctionResultContent result:
                             _reducer.WorkingMemoryBuffer.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{result.Result?.ToString() ?? ""}\n```\n\n</details>\n\n");

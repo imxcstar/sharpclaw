@@ -25,6 +25,8 @@ API keys are encrypted at rest with AES-256-CBC (`DataProtector`). The encryptio
 
 See `Core/SharpclawConfig.cs` for the schema and `Core/ClientFactory.cs` for client instantiation.
 
+OpenAI-compatible providers support injecting custom fields into the request body (e.g. `"thinking": {"type": "disabled"}`). Configure via `ExtraRequestBody` on `DefaultAgentConfig` or per-agent `AgentConfig`. The `Clients/ExtraFieldsPolicy.cs` pipeline policy handles injection; it is only attached when `ExtraRequestBody` is non-empty.
+
 ## Architecture
 
 Sharpclaw is a console/web AI agent with long-term memory, built on `Microsoft.Agents.AI` and `Microsoft.Extensions.AI`.
@@ -72,12 +74,12 @@ The main agent also exposes `SearchMemory` and `GetRecentMemories` as tools the 
 | `recent_memory.md` | Conversation summaries (append-only, trimmed on consolidation) | ConversationArchiver (Summarizer) |
 | `primary_memory.md` | Consolidated core memories (overwritten on consolidation) | ConversationArchiver (Consolidator) |
 | `history/*.md` | Archived full conversation history as Markdown | ConversationArchiver |
-| `memories.json` | Vector memory store (embeddings + metadata) | VectorMemoryStore |
+| `memories.db` | Vector memory store (SQLite, embeddings + metadata) | VectorMemoryStore |
 
 ### Vector Memory Store
 
 `VectorMemoryStore` implements `IMemoryStore`:
-- Persists to `memories.json`
+- Persists to `memories.db` (SQLite)
 - Two-phase search: vector embedding recall → optional `DashScopeRerankClient` rerank
 - Semantic dedup: cosine similarity > 0.85 triggers merge instead of insert
 - `UpdateAsync` re-generates embedding when content changes

@@ -107,6 +107,9 @@ static void RunTui(string[] args)
     // 运行 Terminal.Gui 主循环（阻塞直到退出）
     app.Run(chatWindow);
     chatWindow.Dispose();
+
+    // 清理所有后台任务
+    bootstrap.TaskManager.Dispose();
 }
 
 static string? ConsolePasswordPrompt(string prompt)

@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text.Json;
 using sharpclaw.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -29,6 +30,7 @@ public sealed class ConfigDialog : Dialog
     private readonly TextField _defaultEndpoint;
     private readonly TextField _defaultApiKey;
     private readonly TextField _defaultModel;
+    private readonly TextView _defaultExtraRequestBody;
 
     // 各智能体配置面板
     private readonly AgentPanel _mainPanel;
@@ -108,9 +110,19 @@ public sealed class ConfigDialog : Dialog
 
         var modelLabel = new Label { Text = "模型名称:", X = 1, Y = y };
         _defaultModel = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Model };
+        y += 2;
+
+        var extraLabel = new Label { Text = "额外请求参数:", X = 1, Y = y };
+        y += 1;
+        _defaultExtraRequestBody = new TextView
+        {
+            X = 1, Y = y, Width = Dim.Fill(2), Height = 4,
+            Text = "",
+        };
+        y += 5;
 
         defaultView.Add(providerLabel, _defaultProvider, endpointLabel, _defaultEndpoint,
-            apiKeyLabel, _defaultApiKey, modelLabel, _defaultModel);
+            apiKeyLabel, _defaultApiKey, modelLabel, _defaultModel, extraLabel, _defaultExtraRequestBody);
 
         tabView.AddTab(CreateTab(tabView, "默认", defaultView), true);
 
@@ -294,6 +306,7 @@ public sealed class ConfigDialog : Dialog
         _defaultEndpoint.Text = config.Default.Endpoint;
         _defaultApiKey.Text = config.Default.ApiKey;
         _defaultModel.Text = config.Default.Model;
+        _defaultExtraRequestBody.Text = SerializeExtra(config.Default.ExtraRequestBody);
 
         // 各智能体
         LoadAgentPanel(_mainPanel, config.Agents.Main);
@@ -380,6 +393,14 @@ public sealed class ConfigDialog : Dialog
         var memoryEnabled = _memoryEnabledCheck.Value == CheckState.Checked;
         var rerankEnabled = _rerankEnabledCheck.Value == CheckState.Checked;
 
+        if (!TryParseExtra(_defaultExtraRequestBody.Text, "默认", out var defaultExtra))
+            return;
+        if (!TryParseExtra(_mainPanel.ExtraRequestBody.Text, "主智能体", out _)
+            || !TryParseExtra(_recallerPanel.ExtraRequestBody.Text, "记忆回忆", out _)
+            || !TryParseExtra(_saverPanel.ExtraRequestBody.Text, "记忆保存", out _)
+            || !TryParseExtra(_summarizerPanel.ExtraRequestBody.Text, "对话总结", out _))
+            return;
+
         var config = new SharpclawConfig
         {
             Default = new DefaultAgentConfig
@@ -388,6 +409,7 @@ public sealed class ConfigDialog : Dialog
                 Endpoint = _defaultEndpoint.Text ?? "",
                 ApiKey = _defaultApiKey.Text ?? "",
                 Model = _defaultModel.Text ?? "",
+                ExtraRequestBody = defaultExtra,
             },
             Agents = new AgentsConfig
             {
@@ -447,6 +469,7 @@ public sealed class ConfigDialog : Dialog
         TextField Endpoint,
         TextField ApiKey,
         TextField Model,
+        TextView ExtraRequestBody,
         List<View> CustomViews);
 
     private AgentPanel CreateAgentPanel(string name, bool showEnabled = true)
@@ -491,6 +514,17 @@ public sealed class ConfigDialog : Dialog
         var modelLabel = new Label { Text = "模型名称:", X = 1, Y = y };
         var model = new TextField { X = 14, Y = y, Width = Dim.Fill(2), Text = Providers["anthropic"].Model };
         customViews.AddRange([modelLabel, model]);
+        y += 2;
+
+        var extraLabel = new Label { Text = "额外请求参数:", X = 1, Y = y };
+        y += 1;
+        var extraRequestBody = new TextView
+        {
+            X = 1, Y = y, Width = Dim.Fill(2), Height = 4,
+            Text = "",
+        };
+        customViews.AddRange([extraLabel, extraRequestBody]);
+        y += 5;
 
         // 默认隐藏独立配置字段
         foreach (var v in customViews)
@@ -515,16 +549,20 @@ public sealed class ConfigDialog : Dialog
             foreach (var v in customViews) v.Visible = custom;
         };
 
-        return new AgentPanel(container, enabledCheck, useCustomCheck, provider, endpoint, apiKey, model, customViews);
+        EnableVerticalScroll(container, y);
+
+        return new AgentPanel(container, enabledCheck, useCustomCheck, provider, endpoint, apiKey, model, extraRequestBody, customViews);
     }
 
-    private static AgentConfig BuildAgentConfig(AgentPanel panel)
+    private AgentConfig BuildAgentConfig(AgentPanel panel)
     {
         var enabled = panel.EnabledCheck?.Value != CheckState.UnChecked;
         var useCustom = panel.UseCustomCheck.Value == CheckState.Checked;
 
         if (!useCustom)
             return new AgentConfig { Enabled = enabled };
+
+        TryParseExtra(panel.ExtraRequestBody.Text, "", out var extra);
 
         return new AgentConfig
         {
@@ -533,6 +571,7 @@ public sealed class ConfigDialog : Dialog
             Endpoint = panel.Endpoint.Text ?? "",
             ApiKey = panel.ApiKey.Text ?? "",
             Model = panel.Model.Text ?? "",
+            ExtraRequestBody = extra,
         };
     }
 
@@ -542,7 +581,8 @@ public sealed class ConfigDialog : Dialog
             panel.EnabledCheck.Value = agent.Enabled ? CheckState.Checked : CheckState.UnChecked;
 
         var hasCustom = agent.Provider is not null || agent.Endpoint is not null
-            || agent.ApiKey is not null || agent.Model is not null;
+            || agent.ApiKey is not null || agent.Model is not null
+            || agent.ExtraRequestBody is { Count: > 0 };
 
         panel.UseCustomCheck.Value = hasCustom ? CheckState.Checked : CheckState.UnChecked;
 
@@ -556,8 +596,38 @@ public sealed class ConfigDialog : Dialog
             if (agent.Endpoint is not null) panel.Endpoint.Text = agent.Endpoint;
             if (agent.ApiKey is not null) panel.ApiKey.Text = agent.ApiKey;
             if (agent.Model is not null) panel.Model.Text = agent.Model;
+            panel.ExtraRequestBody.Text = SerializeExtra(agent.ExtraRequestBody);
 
             foreach (var v in panel.CustomViews) v.Visible = true;
+        }
+    }
+
+    #endregion
+
+    #region ExtraRequestBody helpers
+
+    private static readonly JsonSerializerOptions ExtraJsonOptions = new() { WriteIndented = true };
+
+    private static string SerializeExtra(Dictionary<string, JsonElement>? extra)
+    {
+        if (extra is null or { Count: 0 }) return "";
+        return JsonSerializer.Serialize(extra, ExtraJsonOptions);
+    }
+
+    private bool TryParseExtra(string? text, string label, out Dictionary<string, JsonElement>? result)
+    {
+        result = null;
+        if (string.IsNullOrWhiteSpace(text)) return true;
+
+        try
+        {
+            result = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(text);
+            return true;
+        }
+        catch (JsonException)
+        {
+            MessageBox.ErrorQuery(App!, "错误", $"{label}额外请求参数 JSON 格式错误", "确定");
+            return false;
         }
     }
 

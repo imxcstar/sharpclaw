@@ -1,3 +1,5 @@
+using System.ClientModel.Primitives;
+using System.Text.Json;
 using Anthropic;
 using GeminiDotnet;
 using GeminiDotnet.Extensions.AI;
@@ -29,13 +31,7 @@ public static class ClientFactory
                 HttpClient = new HttpClient { Timeout = AgentTimeout },
             }.AsIChatClient(resolved.Model),
 
-            "openai" => new OpenAIClient(
-                    new System.ClientModel.ApiKeyCredential(resolved.ApiKey),
-                    new OpenAIClientOptions
-                    {
-                        Endpoint = new Uri(resolved.Endpoint),
-                        NetworkTimeout = AgentTimeout
-                    })
+            "openai" => CreateOpenAIClient(resolved)
                 .GetChatClient(resolved.Model)
                 .AsIChatClient(),
 
@@ -94,5 +90,18 @@ public static class ClientFactory
             CreateEmbeddingGenerator(config),
             filePath: Path.Combine(Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "memories.db"),
             rerankClient: CreateRerankClient(config));
+    }
+
+    private static OpenAIClient CreateOpenAIClient(DefaultAgentConfig resolved)
+    {
+        var options = new OpenAIClientOptions
+        {
+            Endpoint = new Uri(resolved.Endpoint),
+            NetworkTimeout = AgentTimeout
+        };
+        if (resolved.ExtraRequestBody is { Count: > 0 } extra)
+            options.AddPolicy(new ExtraFieldsPolicy(extra), PipelinePosition.BeforeTransport);
+        return new OpenAIClient(
+            new System.ClientModel.ApiKeyCredential(resolved.ApiKey), options);
     }
 }

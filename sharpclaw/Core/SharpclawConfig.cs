@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using sharpclaw.UI;
 
 namespace sharpclaw.Core;
@@ -40,6 +41,7 @@ public class SharpclawConfig
             Endpoint = agent.Endpoint ?? Default.Endpoint,
             ApiKey = agent.ApiKey ?? Default.ApiKey,
             Model = agent.Model ?? Default.Model,
+            ExtraRequestBody = agent.ExtraRequestBody ?? Default.ExtraRequestBody,
         };
     }
 
@@ -116,6 +118,9 @@ public class DefaultAgentConfig
     public string Endpoint { get; set; } = "";
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, JsonElement>? ExtraRequestBody { get; set; }
 }
 
 /// <summary>
@@ -128,6 +133,9 @@ public class AgentConfig
     public string? Endpoint { get; set; }
     public string? ApiKey { get; set; }
     public string? Model { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, JsonElement>? ExtraRequestBody { get; set; }
 }
 
 /// <summary>

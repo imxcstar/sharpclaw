@@ -117,6 +117,9 @@ public static class WebServer
         Console.WriteLine("按 Ctrl+C 停止");
 
         await app.RunAsync();
+
+        // 清理所有后台任务
+        bootstrap.TaskManager.Dispose();
     }
 
     private static string LoadEmbeddedResource(string name)
