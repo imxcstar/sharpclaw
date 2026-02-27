@@ -87,7 +87,7 @@ public class MemorySaver
             return;
 
         AppLogger.SetStatus("记忆保存中...");
-        var fullText = ConversationArchiver.FormatMessages(history).ToString();
+        var fullText = FormatMessages(history).ToString();
 
         // ── 向量记忆工具 ──
 
@@ -137,7 +137,6 @@ public class MemorySaver
                 Keywords = keywords.ToList()
             };
             await _memoryStore.AddAsync(entry, cancellationToken);
-            AppLogger.Log($"[AutoSave] 新增: [{category}](重要度:{importance}) {content}");
             return $"已保存: {content}";
         }
 
@@ -158,7 +157,6 @@ public class MemorySaver
                 Keywords = keywords.ToList()
             };
             await _memoryStore.UpdateAsync(entry, cancellationToken);
-            AppLogger.Log($"[AutoSave] 更新 {id}: [{category}](重要度:{importance}) {content}");
             return $"已更新: {content}";
         }
 
@@ -167,7 +165,6 @@ public class MemorySaver
             [Description("要删除的记忆 ID")] string id)
         {
             await _memoryStore.RemoveAsync(id, cancellationToken);
-            AppLogger.Log($"[AutoSave] 删除: {id}");
             return $"已删除: {id}";
         }
 
@@ -179,9 +176,11 @@ public class MemorySaver
         sb2.AppendLine($"## 向量记忆库状态：已存 {memoryCount} 条");
         sb2.AppendLine();
         sb2.AppendLine("## 用户本轮输入");
+        sb2.AppendLine();
         sb2.AppendLine(userInput);
         sb2.AppendLine();
         sb2.AppendLine("## 最近对话内容");
+        sb2.AppendLine();
         sb2.Append(fullText);
 
         AIFunction[] vectorTools =
@@ -209,28 +208,50 @@ public class MemorySaver
             "MemorySaver", cancellationToken);
     }
 
+    private static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
+    {
+        var sb = new StringBuilder();
+        foreach (var msg in messages)
+        {
+            if (msg.Role == ChatRole.User)
+            {
+                var text = string.Join("", msg.Contents.OfType<TextContent>()
+                    .Where(t => !string.IsNullOrWhiteSpace(t.Text))
+                    .Select(t => t.Text.Trim()));
+                if (!string.IsNullOrWhiteSpace(text))
+                    sb.Append($"### 用户\n\n{text}\n\n");
+                continue;
+            }
+
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
+                        sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
+                        break;
+                    case FunctionCallContent call:
+                        var args = call.Arguments is not null
+                            ? JsonSerializer.Serialize(call.Arguments)
+                            : "";
+                        sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
+                        break;
+                    case FunctionResultContent result:
+                        var resultText = result.Result?.ToString() ?? "";
+                        if (maxResultLength.HasValue && resultText.Length > maxResultLength)
+                            resultText = resultText[..maxResultLength.Value] + "...";
+                        sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
+                        break;
+                }
+            }
+        }
+        return sb;
+    }
+
     private static async Task RunAgentStreamingAsync(
         ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
     {
         var session = await agent.CreateSessionAsync();
-        var buffer = new StringBuilder();
-        string? bufferType = null;
-
-        void Flush()
-        {
-            if (buffer.Length == 0) return;
-            AppLogger.Log($"[{logPrefix}]: {buffer}");
-            buffer.Clear();
-            bufferType = null;
-        }
-
-        void Append(string type, string text)
-        {
-            if (bufferType != type)
-                Flush();
-            bufferType = type;
-            buffer.Append(text);
-        }
 
         await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
         {
@@ -238,33 +259,12 @@ public class MemorySaver
             {
                 switch (content)
                 {
-                    //case TextContent text:
-                    //    Append("Text", text.Text);
-                    //    break;
-                    //case TextReasoningContent reasoning:
-                    //    AppLogger.SetStatus($"[{logPrefix}]思考中...");
-                    //    Append("Reasoning", reasoning.Text);
-                    //    break;
                     case FunctionCallContent call:
-                        //Flush();
                         AppLogger.SetStatus($"[{logPrefix}]调用工具: {call.Name}");
                         AppLogger.Log($"[{logPrefix}]调用工具: {call.Name}");
-                        //AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                         break;
-                    //default:
-                    //    Flush();
-                    //    break;
-
-                        //case FunctionResultContent result:
-                        //    Flush();
-                        //    var resultJson = JsonSerializer.Serialize(result.Result);
-                        //    if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
-                        //    AppLogger.Log($"[{logPrefix}:Result] {resultJson}");
-                        //    break;
                 }
             }
         }
-
-        Flush();
     }
 }

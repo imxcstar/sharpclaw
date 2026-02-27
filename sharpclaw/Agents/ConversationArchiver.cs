@@ -245,6 +245,7 @@ public class ConversationArchiver
 
         var sb = new StringBuilder();
         sb.AppendLine("## 需要巩固的近期记忆摘要");
+        sb.AppendLine();
         sb.AppendLine(toConsolidate);
 
         var options = new ChatOptions
@@ -307,39 +308,39 @@ public class ConversationArchiver
             var filePath = Path.Combine(_historyDir, fileName);
 
             var sb = new StringBuilder();
-            sb.AppendLine($"# 对话历史 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine();
+            sb.Append($"# 对话历史 {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n\n");
 
             foreach (var msg in messages)
             {
-                var role = msg.Role == ChatRole.User ? "用户"
-                         : msg.Role == ChatRole.Assistant ? "助手"
-                         : "工具";
-                sb.AppendLine($"### {role}");
+                if (msg.Role == ChatRole.User)
+                {
+                    var text = string.Join("", msg.Contents.OfType<TextContent>()
+                        .Where(t => !string.IsNullOrWhiteSpace(t.Text))
+                        .Select(t => t.Text.Trim()));
+                    if (!string.IsNullOrWhiteSpace(text))
+                        sb.Append($"### 用户\n\n{text}\n\n");
+                    continue;
+                }
 
                 foreach (var content in msg.Contents)
                 {
                     switch (content)
                     {
                         case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
-                            sb.AppendLine(text.Text.Trim());
+                            sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
                             break;
                         case FunctionCallContent call:
                             var args = call.Arguments is not null
                                 ? JsonSerializer.Serialize(call.Arguments)
                                 : "";
-                            sb.AppendLine($"**调用工具** `{call.Name}`");
-                            if (!string.IsNullOrEmpty(args))
-                                sb.AppendLine($"```json\n{args}\n```");
+                            sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
                             break;
                         case FunctionResultContent result:
                             var resultText = result.Result?.ToString() ?? "";
-                            sb.AppendLine($"**工具结果**");
-                            sb.AppendLine($"```\n{resultText}\n```");
+                            sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
                             break;
                     }
                 }
-                sb.AppendLine();
             }
 
             await File.WriteAllTextAsync(filePath, sb.ToString(), cancellationToken);
@@ -359,24 +360,6 @@ public class ConversationArchiver
         ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
     {
         var session = await agent.CreateSessionAsync();
-        var buffer = new StringBuilder();
-        string? bufferType = null;
-
-        void Flush()
-        {
-            if (buffer.Length == 0) return;
-            AppLogger.Log($"[{logPrefix}]: {buffer}");
-            buffer.Clear();
-            bufferType = null;
-        }
-
-        void Append(string type, string text)
-        {
-            if (bufferType != type)
-                Flush();
-            bufferType = type;
-            buffer.Append(text);
-        }
 
         await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
         {
@@ -384,33 +367,13 @@ public class ConversationArchiver
             {
                 switch (content)
                 {
-                    //case TextContent text:
-                    //    Append("Text", text.Text);
-                    //    break;
-                    //case TextReasoningContent reasoning:
-                    //    AppLogger.SetStatus($"[{logPrefix}]思考中...");
-                    //    Append("Reasoning", reasoning.Text);
-                    //    break;
                     case FunctionCallContent call:
-                        //Flush();
                         AppLogger.SetStatus($"[{logPrefix}]调用工具: {call.Name}");
                         AppLogger.Log($"[{logPrefix}]调用工具: {call.Name}");
-                        //AppLogger.Log($"[{logPrefix}:Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
                         break;
-                    //default:
-                    //    Flush();
-                    //    break;
-                        //case FunctionResultContent result:
-                        //    Flush();
-                        //    var resultJson = JsonSerializer.Serialize(result.Result);
-                        //    if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
-                        //    AppLogger.Log($"[{logPrefix}:Result] {resultJson}");
-                        //    break;
                 }
             }
         }
-
-        Flush();
     }
 
     private static string? ReadFile(string? path)
@@ -423,46 +386,6 @@ public class ConversationArchiver
             return string.IsNullOrWhiteSpace(content) ? null : content;
         }
         catch { return null; }
-    }
-
-    public static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
-    {
-        var sb = new StringBuilder();
-        foreach (var msg in messages)
-        {
-            if (msg.Role == ChatRole.User)
-            {
-                var text = string.Join("", msg.Contents.OfType<TextContent>()
-                    .Where(t => !string.IsNullOrWhiteSpace(t.Text))
-                    .Select(t => t.Text.Trim()));
-                if (!string.IsNullOrWhiteSpace(text))
-                    sb.Append($"### 用户\n\n{text}\n\n");
-                continue;
-            }
-
-            foreach (var content in msg.Contents)
-            {
-                switch (content)
-                {
-                    case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
-                        sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
-                        break;
-                    case FunctionCallContent call:
-                        var args = call.Arguments is not null
-                            ? JsonSerializer.Serialize(call.Arguments)
-                            : "";
-                        sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
-                        break;
-                    case FunctionResultContent result:
-                        var resultText = result.Result?.ToString() ?? "";
-                        if (maxResultLength.HasValue && resultText.Length > maxResultLength)
-                            resultText = resultText[..maxResultLength.Value] + "...";
-                        sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
-                        break;
-                }
-            }
-        }
-        return sb;
     }
 
     #endregion
