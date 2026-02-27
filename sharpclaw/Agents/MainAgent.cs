@@ -127,7 +127,13 @@ public class MainAgent
         await _chatIO.WaitForReadyAsync();
 
         _session = await _agent.CreateSessionAsync();
-        _reducer.WorkingMemoryInjected = false;
+        if (File.Exists(_workingMemoryPath))
+        {
+            _reducer.OldWorkingMemoryContent = File.ReadAllText(_workingMemoryPath);
+
+            if (!string.IsNullOrWhiteSpace(_reducer.OldWorkingMemoryContent))
+                _reducer.WorkingMemoryBuffer.Append(_reducer.OldWorkingMemoryContent + "\n\n---\n\n");
+        }
 
         while (!cancellationToken.IsCancellationRequested)
         {

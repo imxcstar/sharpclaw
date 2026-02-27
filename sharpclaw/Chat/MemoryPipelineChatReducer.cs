@@ -39,8 +39,10 @@ public class MemoryPipelineChatReducer : IChatReducer
     /// <summary>工作记忆文件路径，由 MainAgent 设置。</summary>
     public string? WorkingMemoryPath { get; set; }
 
-    /// <summary>是否已注入工作记忆。会话重新 Run 时应重置为 false。</summary>
-    public bool WorkingMemoryInjected { get; set; }
+    /// <summary>
+    /// 上一次的工作记忆内容快照（对话结束时保存），供 MainAgent 在新会话开始时注入。
+    /// </summary>
+    public string? OldWorkingMemoryContent { get; set; }
 
     /// <summary>由 MainAgent 在流式输出时累积的工作记忆内容。</summary>
     public StringBuilder WorkingMemoryBuffer { get; } = new();
@@ -108,8 +110,10 @@ public class MemoryPipelineChatReducer : IChatReducer
         if (conversationMessages.Count > _resetThreshold)
         {
             // 进入裁剪，清空累积的工作记忆
+            OldWorkingMemoryContent = string.Empty;
             WorkingMemoryBuffer.Clear();
-            // 记忆保存（归档前，确保对话内容被向量记忆捕获）
+
+            // 向量记忆保存（归档前，确保对话内容被向量记忆捕获）
             if (_memorySaver is not null && UserInput is not null)
             {
                 try
@@ -151,27 +155,15 @@ public class MemoryPipelineChatReducer : IChatReducer
         // ── 4. 注入记忆 ──
         InjectMemories(systemMessages, archiveResult, existingRecentMemory, existingPrimaryMemory);
 
-        // ── 5. 首次注入工作记忆（上次会话的对话快照）──
-        if (!WorkingMemoryInjected && WorkingMemoryPath is not null && File.Exists(WorkingMemoryPath))
+        // ── 5. 注入工作记忆（上次会话的对话快照）──
+        if (!string.IsNullOrWhiteSpace(OldWorkingMemoryContent))
         {
-            try
+            systemMessages.Add(new ChatMessage(ChatRole.System,
+                $"[工作记忆] 以下是上次会话的对话记录，供你参考延续上下文：\n\n{OldWorkingMemoryContent}")
             {
-                var workingMemory = File.ReadAllText(WorkingMemoryPath);
-                if (!string.IsNullOrWhiteSpace(workingMemory))
-                {
-                    systemMessages.Add(new ChatMessage(ChatRole.System,
-                        $"[工作记忆] 以下是上次会话的对话记录，供你参考延续上下文：\n\n{workingMemory}")
-                    {
-                        AdditionalProperties = new() { [AutoWorkingMemoryKey] = true }
-                    });
-                    AppLogger.Log($"[Reducer] 已注入工作记忆（{workingMemory.Length}字）");
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[Reducer] 工作记忆读取失败: {ex.Message}");
-            }
-            WorkingMemoryInjected = true;
+                AdditionalProperties = new() { [AutoWorkingMemoryKey] = true }
+            });
+            AppLogger.Log($"[Reducer] 已注入工作记忆（{OldWorkingMemoryContent.Length}字）");
         }
 
         // ── 6. 确保对话以用户消息开头 ──
