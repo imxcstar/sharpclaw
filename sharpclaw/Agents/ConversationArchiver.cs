@@ -18,7 +18,7 @@ public class ConversationArchiver
     /// <summary>向后兼容：用于剥离旧会话中残留的摘要注入消息。</summary>
     internal const string AutoSummaryKey = "__auto_summary__";
 
-    private const int RecentMemoryMaxLength = 5000;
+    private const int RecentMemoryMaxLength = 30000;
 
     private readonly IChatClient _client;
     private readonly string _workingMemoryPath;
