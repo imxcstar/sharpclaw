@@ -24,11 +24,12 @@ jobs:
           dotnet-quality: 'preview'
 
       - name: Publish
-        run: dotnet publish sharpclaw -c Release -r ${{ matrix.rid }} --self-contained -p:PublishSingleFile=true -o out/${{ matrix.rid }}
+        run: dotnet publish sharpclaw -c Release -r ${{ matrix.rid }} --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:GenerateDocumentationFile=false -o out/${{ matrix.rid }}
 
       - name: Package
         run: |
           cd out/${{ matrix.rid }}
+          rm -f *.pdb *.xml
           zip -r ../../sharpclaw-${{ matrix.rid }}.zip .
 
       - uses: actions/upload-artifact@v4
