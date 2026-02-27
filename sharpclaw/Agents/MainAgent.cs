@@ -190,6 +190,8 @@ public class MainAgent
 
         // 流式输出
         _reducer.UserInput = input;
+        _reducer.WorkingMemoryBuffer.Append($"### 用户\n\n{input}\n\n");
+        AIContent? lastContent = null;
         AppLogger.SetStatus("AI 思考中...");
         _chatIO.BeginAiResponse();
         try
@@ -202,6 +204,9 @@ public class MainAgent
                     {
                         case TextContent text:
                             _chatIO.AppendChat(text.Text);
+                            if (lastContent is not TextContent)
+                                _reducer.WorkingMemoryBuffer.Append("### 助手\n\n");
+                            _reducer.WorkingMemoryBuffer.Append(text.Text);
                             break;
                         case TextReasoningContent reasoning:
                             AppLogger.SetStatus($"[Main]思考中...");
@@ -210,15 +215,13 @@ public class MainAgent
                         case FunctionCallContent call:
                             AppLogger.SetStatus($"[Main]调用工具: {call.Name}");
                             AppLogger.Log($"[Main]调用工具: {call.Name}");
-                            //AppLogger.Log($"[Call] {call.Name}({JsonSerializer.Serialize(call.Arguments)})");
+                            _reducer.WorkingMemoryBuffer.Append($"\n\n#### 工具调用: {call.Name}\n\n");
                             break;
-                        //case FunctionResultContent result:
-                        //    var resultJson = JsonSerializer.Serialize(result.Result);
-                        //    if (resultJson.Length > 200) resultJson = resultJson[..200] + "...";
-                        //    AppLogger.Log($"[Result({result.CallId})] {resultJson}");
-                        //    AppLogger.SetStatus("AI 思考中...");
-                        //    break;
+                        case FunctionResultContent result:
+                            _reducer.WorkingMemoryBuffer.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{result.Result?.ToString() ?? ""}\n```\n\n</details>\n\n");
+                            break;
                     }
+                    lastContent = content;
                 }
             }
         }
@@ -228,12 +231,12 @@ public class MainAgent
             return;
         }
         _chatIO.AppendChat("\n");
+        _reducer.WorkingMemoryBuffer.Append("\n\n---\n\n");
 
         // 持久化工作记忆
         try
         {
-            var formatted = ConversationArchiver.FormatMessages(MemoryPipelineChatReducer.LastMessages).ToString();
-            File.WriteAllText(_workingMemoryPath, formatted);
+            File.WriteAllText(_workingMemoryPath, _reducer.WorkingMemoryBuffer.ToString());
         }
         catch (Exception ex)
         {

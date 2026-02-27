@@ -1,5 +1,5 @@
+using System.Text;
 using Microsoft.Extensions.AI;
-
 using sharpclaw.Agents;
 using sharpclaw.UI;
 
@@ -41,6 +41,9 @@ public class MemoryPipelineChatReducer : IChatReducer
 
     /// <summary>是否已注入工作记忆。会话重新 Run 时应重置为 false。</summary>
     public bool WorkingMemoryInjected { get; set; }
+
+    /// <summary>由 MainAgent 在流式输出时累积的工作记忆内容。</summary>
+    public StringBuilder WorkingMemoryBuffer { get; } = new();
 
     /// <param name="resetThreshold">消息数超过此阈值时触发清空和归档</param>
     public MemoryPipelineChatReducer(
@@ -96,14 +99,16 @@ public class MemoryPipelineChatReducer : IChatReducer
         if (_systemPrompt is not null && systemMessages.Count == 0)
             systemMessages.Add(new ChatMessage(ChatRole.System, _systemPrompt));
 
-        // ── 2. 保存工作记忆 ──
-        SaveWorkingMemory(conversationMessages);
+        // ── 2. 保存工作记忆（从 MainAgent 流式累积的 WorkingMemoryBuffer）──
+        SaveWorkingMemory();
 
         // ── 3. 溢出时清空对话并归档 ──
         ArchiveResult? archiveResult = null;
 
         if (conversationMessages.Count > _resetThreshold)
         {
+            // 进入裁剪，清空累积的工作记忆
+            WorkingMemoryBuffer.Clear();
             // 记忆保存（归档前，确保对话内容被向量记忆捕获）
             if (_memorySaver is not null && UserInput is not null)
             {
@@ -181,7 +186,7 @@ public class MemoryPipelineChatReducer : IChatReducer
         return result;
     }
 
-    private void SaveWorkingMemory(IReadOnlyList<ChatMessage> messages)
+    private void SaveWorkingMemory()
     {
         if (WorkingMemoryPath is null)
             return;
@@ -192,9 +197,9 @@ public class MemoryPipelineChatReducer : IChatReducer
             if (dir is not null && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            var formatted = ConversationArchiver.FormatMessages(messages).ToString();
-            File.WriteAllText(WorkingMemoryPath, formatted);
-            AppLogger.Log($"[Reducer] 已保存工作记忆（{formatted.Length}字）");
+            var content = WorkingMemoryBuffer.ToString();
+            File.WriteAllText(WorkingMemoryPath, content);
+            AppLogger.Log($"[Reducer] 已保存工作记忆（{content.Length}字）");
         }
         catch (Exception ex)
         {

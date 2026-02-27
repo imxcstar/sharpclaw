@@ -430,38 +430,37 @@ public class ConversationArchiver
         var sb = new StringBuilder();
         foreach (var msg in messages)
         {
-            var parts = new List<string>();
+            if (msg.Role == ChatRole.User)
+            {
+                var text = string.Join("", msg.Contents.OfType<TextContent>()
+                    .Where(t => !string.IsNullOrWhiteSpace(t.Text))
+                    .Select(t => t.Text.Trim()));
+                if (!string.IsNullOrWhiteSpace(text))
+                    sb.Append($"### 用户\n\n{text}\n\n");
+                continue;
+            }
+
             foreach (var content in msg.Contents)
             {
                 switch (content)
                 {
                     case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
-                        parts.Add(text.Text.Trim());
+                        sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
                         break;
                     case FunctionCallContent call:
                         var args = call.Arguments is not null
                             ? JsonSerializer.Serialize(call.Arguments)
                             : "";
-                        parts.Add($"[调用工具 {call.Name}({args})]");
+                        sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
                         break;
                     case FunctionResultContent result:
                         var resultText = result.Result?.ToString() ?? "";
-                        if (maxResultLength.HasValue)
-                        {
-                            if (resultText.Length > maxResultLength)
-                                resultText = resultText[..maxResultLength.Value] + "...";
-                        }
-                        parts.Add($"[工具结果: {resultText}]");
+                        if (maxResultLength.HasValue && resultText.Length > maxResultLength)
+                            resultText = resultText[..maxResultLength.Value] + "...";
+                        sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
                         break;
                 }
             }
-
-            if (parts.Count == 0) continue;
-
-            var role = msg.Role == ChatRole.User ? "用户"
-                     : msg.Role == ChatRole.Assistant ? "助手"
-                     : "工具";
-            sb.AppendLine($"{role}: {string.Join(" ", parts)}");
         }
         return sb;
     }
