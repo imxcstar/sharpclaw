@@ -483,7 +483,7 @@ public class FileCommands : CommandBase
         );
     }
 
-    [Description("Read file contents with pagination (500 lines per page)")]
+    [Description("Read file contents with pagination (500 lines per page, includes line numbers)")]
     public string CommandCat(
         [Description("File path to read")] string filePath,
         [Description("Starting line number (1-based)")] int fromLine = 1,

@@ -28,7 +28,7 @@ public static class AgentBootstrap
         var processCommands = new ProcessCommands(taskManager);
         var taskCommands = new TaskCommands(taskManager);
 
-        var commandSkills = new List<Delegate>
+        var commandSkillDelegates = new List<Delegate>
         {
             systemCommands.GetSystemInfo,
             systemCommands.ExitProgram,
@@ -48,8 +48,6 @@ public static class AgentBootstrap
 
             httpCommands.CommandHttp,
 
-            processCommands.CommandPowershell,
-
             taskCommands.TaskGetStatus,
             taskCommands.TaskRead,
             taskCommands.TaskWait,
@@ -58,7 +56,18 @@ public static class AgentBootstrap
             taskCommands.TaskRemove,
             taskCommands.TaskWriteStdin,
             taskCommands.TaskCloseStdin,
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            commandSkillDelegates.Add(processCommands.CommandPowershell);
         }
+        else
+        {
+            commandSkillDelegates.Add(processCommands.CommandBash);
+        }
+
+        var commandSkills = commandSkillDelegates
         .Select(d => AIFunctionFactory.Create(d))
         .ToArray();
 

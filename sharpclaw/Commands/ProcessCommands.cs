@@ -22,4 +22,13 @@ public class ProcessCommands : CommandBase
         return RunProcess("Powershell", args ?? Array.Empty<string>(), "Powershell " + string.Join(" ", args ?? Array.Empty<string>()),
             true, workingDirectory, 0);
     }
+
+    [Description("Execute Bash commands")]
+    public string CommandBash(
+    [Description("Arguments to pass to Bash")] string[] args,
+    [Description("Working directory (optional)")] string workingDirectory = "")
+    {
+        return RunProcess("bash", args ?? Array.Empty<string>(), "bash " + string.Join(" ", args ?? Array.Empty<string>()),
+            true, workingDirectory, 0);
+    }
 }

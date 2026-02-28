@@ -21,6 +21,7 @@ public class ConversationArchiver
     private const int RecentMemoryMaxLength = 30000;
 
     private readonly IChatClient _client;
+    private readonly string _sessionDirPath;
     private readonly string _workingMemoryPath;
     private readonly string _recentMemoryPath;
     private readonly string _primaryMemoryPath;
@@ -31,18 +32,19 @@ public class ConversationArchiver
 
     public ConversationArchiver(
         IChatClient client,
+        string sessionDirPath,
         string workingMemoryPath,
         string recentMemoryPath,
         string primaryMemoryPath,
         AIFunction[] tools)
     {
         _client = client;
+        _sessionDirPath = sessionDirPath;
         _workingMemoryPath = workingMemoryPath;
         _recentMemoryPath = recentMemoryPath;
         _primaryMemoryPath = primaryMemoryPath;
         _tools = tools;
-        _historyDir = Path.Combine(
-            Path.GetDirectoryName(SharpclawConfig.ConfigPath)!, "history");
+        _historyDir = Path.Combine(_sessionDirPath, "history");
 
         _summarizerPrompt = $"""
             你是一个对话摘要助手。你的任务是为被裁剪的对话生成尽可能详细的摘要，并保存到近期记忆文件中。
@@ -61,14 +63,14 @@ public class ConversationArchiver
 
             ## 流程
 
-            1. 读取工作记忆文件，获取被裁剪的对话内容
+            1. 完整读取工作记忆文件，获取被裁剪的对话内容
             2. 可选：读取其他记忆文件或搜索向量记忆作为参考，了解已有上下文，避免重复
             3. 生成详细摘要
             4. 将摘要追加到近期记忆文件末尾，内容格式必须为：
                ### yyyy-MM-dd HH:mm（当前时间）
                摘要正文
 
-               （末尾空一行）
+               （末尾空两行\n\n）
 
             ## 摘要要求
 
