@@ -503,16 +503,15 @@ public class FileCommands : CommandBase
             var full = Path.GetFullPath(filePath, baseDir);
 
             if (!File.Exists(full))
-                return $"Error: File not found: {full}\n💡 TIP: Use FindFiles to check the correct file path.";
+                return $"❌ Error: File not found: {full}\n💡 TIP: Use FindFiles to check the correct file path.";
 
             if (line < 1) line = 1;
-            // 如果没有提供 endLine，默认只操作 startLine 这一行
             if (endLine < 1) endLine = line;
 
             var modeLower = (mode ?? "insert").Trim().ToLowerInvariant();
 
             if ((modeLower == "insert" || modeLower == "replace" || modeLower == "append") && string.IsNullOrEmpty(text))
-                return $"Error: 'text' parameter is required for mode '{modeLower}'.";
+                return $"❌ Error: 'text' parameter is required for mode '{modeLower}'.";
 
             var lines = new List<string>();
             Encoding encoding;
@@ -524,8 +523,13 @@ public class FileCommands : CommandBase
                 encoding = sr.CurrentEncoding;
             }
 
-            // 假设 ToLinesFromEscaped 是当前类中已有的方法
-            var newLines = ToLinesFromEscaped(text);
+            // 保存一份修改前的副本，用于后续生成精准的 Diff
+            var originalLines = new List<string>(lines);
+
+            // 处理输入文本的多行分割 (兼容各种换行符)
+            var newLines = string.IsNullOrEmpty(text)
+                ? new List<string>()
+                : text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None).ToList();
 
             int idx = line - 1;
             int removed = 0;
@@ -548,11 +552,10 @@ public class FileCommands : CommandBase
 
                 case "replace":
                     if (idx < 0 || idx >= lines.Count)
-                        return $"Error: Start line {line} is out of range. The file only has {lines.Count} lines.";
+                        return $"❌ Error: Start line {line} is out of range. The file only has {lines.Count} lines.";
 
-                    // 计算需要替换的行数 (endLine 包含在内)
                     int linesToReplace = endLine - line + 1;
-                    if (linesToReplace < 1) return $"Error: endLine ({endLine}) cannot be less than start line ({line}).";
+                    if (linesToReplace < 1) return $"❌ Error: endLine ({endLine}) cannot be less than start line ({line}).";
 
                     removed = Math.Min(linesToReplace, lines.Count - idx);
                     lines.RemoveRange(idx, removed);
@@ -562,27 +565,28 @@ public class FileCommands : CommandBase
 
                 case "delete":
                     if (idx < 0 || idx >= lines.Count)
-                        return $"Error: Start line {line} is out of range. The file only has {lines.Count} lines.";
+                        return $"❌ Error: Start line {line} is out of range. The file only has {lines.Count} lines.";
 
                     int linesToDelete = endLine - line + 1;
-                    if (linesToDelete < 1) return $"Error: endLine ({endLine}) cannot be less than start line ({line}).";
+                    if (linesToDelete < 1) return $"❌ Error: endLine ({endLine}) cannot be less than start line ({line}).";
 
                     removed = Math.Min(linesToDelete, lines.Count - idx);
                     lines.RemoveRange(idx, removed);
                     break;
 
                 default:
-                    return $"Error: Unknown mode '{modeLower}'. Valid modes are: insert, replace, delete, append.";
+                    return $"❌ Error: Unknown mode '{modeLower}'. Valid modes are: insert, replace, delete, append.";
             }
 
-            // 写入文件
             var tmp = full + ".tmp." + Guid.NewGuid().ToString("N");
             File.WriteAllText(tmp, string.Join(Environment.NewLine, lines), encoding);
             File.Move(tmp, full, overwrite: true);
 
-            // --- 构建包含代码预览的纯文本输出 ---
+            // ==========================================
+            // 构建 Git 风格的 Diff 输出 (核心魔法)
+            // ==========================================
             var sb = new StringBuilder();
-            sb.AppendLine($"--- Edit Successful ---");
+            sb.AppendLine($"✅ --- Edit Successful ---");
             sb.AppendLine($"File: {full}");
             sb.AppendLine($"Mode: {modeLower}");
 
@@ -592,28 +596,50 @@ public class FileCommands : CommandBase
             if (modeLower == "insert" || modeLower == "replace" || modeLower == "append")
                 sb.AppendLine($"Lines Inserted: {inserted}");
 
-            sb.AppendLine("\n[Preview of changes]:");
+            sb.AppendLine("\n[Diff Preview]:");
+            sb.AppendLine("```diff");
+            sb.AppendLine($"--- a/{Path.GetFileName(full)}");
+            sb.AppendLine($"+++ b/{Path.GetFileName(full)}");
 
-            // 智能截取修改位置的上下文（上下各多看 2 行）
-            int previewStartIdx = Math.Max(0, idx - 2);
-            int previewEndIdx = Math.Min(lines.Count - 1, idx + inserted + 1);
+            int contextLines = 3; // 显示修改处上下 3 行的上下文
 
-            for (int i = previewStartIdx; i <= previewEndIdx; i++)
+            // 1. 打印上半部分的上下文 (保留原行号)
+            int topContextStart = Math.Max(0, idx - contextLines);
+            for (int i = topContextStart; i < idx; i++)
             {
-                // 如果是刚才插入的行，在前面加一个 '+' 号给予强烈视觉提示
-                bool isNew = (modeLower != "delete") && (i >= idx && i < idx + inserted);
-                string marker = isNew ? "+" : " ";
-                sb.AppendLine($"{marker} {i + 1,4} | {lines[i]}");
+                sb.AppendLine($"   {i + 1,4} | {originalLines[i]}");
             }
 
-            sb.AppendLine("-----------------------");
-            sb.AppendLine("💡 TIP: Verify the preview above. If it's wrong, you can immediately use CommandEditText to fix it.");
+            // 2. 打印被删除的行 (标记为 '-'，使用旧行号)
+            for (int i = 0; i < removed; i++)
+            {
+                sb.AppendLine($"-  {idx + i + 1,4} | {originalLines[idx + i]}");
+            }
+
+            // 3. 打印新增的行 (标记为 '+'，使用新行号)
+            for (int i = 0; i < newLines.Count; i++)
+            {
+                sb.AppendLine($"+  {idx + i + 1,4} | {newLines[i]}");
+            }
+
+            // 4. 打印下半部分的上下文 (使用新文件的行号)
+            int bottomContextStartOld = idx + removed;
+            int bottomContextStartNew = idx + inserted;
+            int bottomContextCount = Math.Min(originalLines.Count - bottomContextStartOld, contextLines);
+
+            for (int i = 0; i < bottomContextCount; i++)
+            {
+                sb.AppendLine($"   {bottomContextStartNew + i + 1,4} | {originalLines[bottomContextStartOld + i]}");
+            }
+
+            sb.AppendLine("```");
+            sb.AppendLine("💡 TIP: Verify the diff preview above. If the indentation is wrong or lines are messed up, use CommandEditText again to fix it immediately.");
 
             return sb.ToString();
         }
         catch (Exception ex)
         {
-            return $"Error ({ex.GetType().Name}): {ex.Message}";
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
         }
     }
 
