@@ -1,6 +1,7 @@
+using sharpclaw.Core;
+using sharpclaw.Core.TaskManagement;
 using System;
 using System.ComponentModel;
-using sharpclaw.Core.TaskManagement;
 
 namespace sharpclaw.Commands;
 
@@ -9,17 +10,17 @@ namespace sharpclaw.Commands;
 /// </summary>
 public class ProcessCommands : CommandBase
 {
-    public ProcessCommands(TaskManager taskManager)
-        : base(taskManager)
+    public ProcessCommands(TaskManager taskManager, IAgentContext agentContext)
+        : base(taskManager, agentContext)
     {
     }
 
-    [Description("Execute Powershell commands")]
+    [Description("Execute pwsh commands")]
     public string CommandPowershell(
-    [Description("Arguments to pass to Powershell")] string[] args,
+    [Description("Arguments to pass to pwsh")] string[] args,
     [Description("Working directory (optional)")] string workingDirectory = "")
     {
-        return RunProcess("Powershell", args ?? Array.Empty<string>(), "Powershell " + string.Join(" ", args ?? Array.Empty<string>()),
+        return RunProcess("pwsh", args ?? Array.Empty<string>(), "pwsh " + string.Join(" ", args ?? Array.Empty<string>()),
             true, workingDirectory, 0);
     }
 

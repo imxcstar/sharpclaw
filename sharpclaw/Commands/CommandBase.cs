@@ -1,3 +1,6 @@
+using sharpclaw.Core;
+using sharpclaw.Core.Serialization;
+using sharpclaw.Core.TaskManagement;
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -5,8 +8,6 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using sharpclaw.Core.Serialization;
-using sharpclaw.Core.TaskManagement;
 
 namespace sharpclaw.Commands;
 
@@ -17,11 +18,15 @@ namespace sharpclaw.Commands;
 public abstract class CommandBase
 {
     protected readonly TaskManager TaskManager;
+    private readonly IAgentContext _agentContext;
 
-    protected CommandBase(TaskManager taskManager)
+    protected CommandBase(TaskManager taskManager, IAgentContext agentContext)
     {
         TaskManager = taskManager;
+        _agentContext = agentContext;
     }
+
+    protected string GetDefaultWorkspace() => _agentContext.GetWorkspacePath();
 
     protected string Serialize(object obj) => JsonSerializer.Serialize(obj);
 
@@ -36,7 +41,7 @@ public abstract class CommandBase
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
-            WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory,
+            WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? GetDefaultWorkspace() : workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true,

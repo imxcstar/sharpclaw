@@ -44,6 +44,7 @@ public class MainAgent
     private readonly IChatIO _chatIO;
     private readonly string _workingMemoryPath;
     private readonly MemoryPipelineChatReducer _reducer;
+    private readonly IAgentContext _agentContext;
     private InMemoryChatHistoryProvider? _historyProvider;
     private AgentSession? _session;
 
@@ -51,7 +52,8 @@ public class MainAgent
         SharpclawConfig config,
         IMemoryStore? memoryStore,
         AIFunction[] commandSkills,
-        IChatIO chatIO)
+        IChatIO chatIO,
+        IAgentContext agentContext)
     {
         var sharpclawDir = Path.GetDirectoryName(SharpclawConfig.ConfigPath)!;
 
@@ -70,6 +72,9 @@ public class MainAgent
         var workspaceDir = Path.Combine(sessionDir, "workspace");
         if (!Directory.Exists(workspaceDir))
             Directory.CreateDirectory(workspaceDir);
+
+        _agentContext = agentContext;
+        _agentContext.SetWorkspacePath(workspaceDir);
 
         SystemPrompt.AppendLine();
         SystemPrompt.AppendLine($"[工作目录] {workspaceDir}");

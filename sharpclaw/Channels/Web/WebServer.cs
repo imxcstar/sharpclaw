@@ -92,7 +92,8 @@ public static class WebServer
                 bootstrap.Config,
                 bootstrap.MemoryStore,
                 bootstrap.CommandSkills,
-                chatIO: chatIO);
+                chatIO: chatIO,
+                bootstrap.AgentContext);
 
             try
             {

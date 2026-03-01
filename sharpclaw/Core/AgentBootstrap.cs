@@ -15,18 +15,20 @@ public static class AgentBootstrap
         SharpclawConfig Config,
         TaskManager TaskManager,
         AIFunction[] CommandSkills,
-        IMemoryStore? MemoryStore);
+        IMemoryStore? MemoryStore,
+        IAgentContext AgentContext);
 
     public static BootstrapResult Initialize()
     {
         var config = SharpclawConfig.Load();
         var taskManager = new TaskManager();
+        var agentContext = new AgentContext();
 
-        var systemCommands = new SystemCommands(taskManager);
-        var fileCommands = new FileCommands(taskManager);
-        var httpCommands = new HttpCommands(taskManager);
-        var processCommands = new ProcessCommands(taskManager);
-        var taskCommands = new TaskCommands(taskManager);
+        var systemCommands = new SystemCommands(taskManager, agentContext);
+        var fileCommands = new FileCommands(taskManager, agentContext);
+        var httpCommands = new HttpCommands(taskManager, agentContext);
+        var processCommands = new ProcessCommands(taskManager, agentContext);
+        var taskCommands = new TaskCommands(taskManager, agentContext);
 
         var commandSkillDelegates = new List<Delegate>
         {
@@ -74,6 +76,6 @@ public static class AgentBootstrap
 
         var memoryStore = ClientFactory.CreateMemoryStore(config);
 
-        return new BootstrapResult(config, taskManager, commandSkills, memoryStore);
+        return new BootstrapResult(config, taskManager, commandSkills, memoryStore, agentContext);
     }
 }

@@ -1,4 +1,7 @@
+using sharpclaw.Core;
+using sharpclaw.Core.TaskManagement;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -9,8 +12,6 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Generic;
-using sharpclaw.Core.TaskManagement;
 
 namespace sharpclaw.Commands;
 
@@ -19,8 +20,8 @@ namespace sharpclaw.Commands;
 /// </summary>
 public class HttpCommands : CommandBase
 {
-    public HttpCommands(TaskManager taskManager)
-        : base(taskManager)
+    public HttpCommands(TaskManager taskManager, IAgentContext agentContext)
+        : base(taskManager, agentContext)
     {
     }
 
@@ -48,7 +49,7 @@ public class HttpCommands : CommandBase
             runner: async (ctx, ct) =>
             {
                 var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                    ? Environment.CurrentDirectory
+                    ? GetDefaultWorkspace()
                     : workingDirectory!;
 
                 try

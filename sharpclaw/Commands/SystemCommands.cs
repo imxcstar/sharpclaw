@@ -1,9 +1,10 @@
+using sharpclaw.Core;
+using sharpclaw.Core.TaskManagement;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
-using sharpclaw.Core.TaskManagement;
 
 namespace sharpclaw.Commands;
 
@@ -12,8 +13,8 @@ namespace sharpclaw.Commands;
 /// </summary>
 public class SystemCommands : CommandBase
 {
-    public SystemCommands(TaskManager taskManager)
-        : base(taskManager)
+    public SystemCommands(TaskManager taskManager, IAgentContext agentContext)
+        : base(taskManager, agentContext)
     {
     }
 

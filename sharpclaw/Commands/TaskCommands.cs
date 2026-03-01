@@ -1,3 +1,6 @@
+using sharpclaw.Core;
+using sharpclaw.Core.TaskManagement;
+using sharpclaw.UI;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -7,8 +10,6 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
-using sharpclaw.Core.TaskManagement;
-using sharpclaw.UI;
 
 namespace sharpclaw.Commands;
 
@@ -21,8 +22,8 @@ public class TaskCommands : CommandBase
     private const int TaskReadMaxLines = 50;
     private const int TaskReadScanChunkSize = 4096;
 
-    public TaskCommands(TaskManager taskManager)
-        : base(taskManager)
+    public TaskCommands(TaskManager taskManager, IAgentContext agentContext)
+        : base(taskManager, agentContext)
     {
     }
 

@@ -99,7 +99,7 @@ static void RunTui(string[] args)
     // ── 创建 ChatWindow 并启动主智能体 ──
     var chatWindow = new ChatWindow(bootstrap.Config.Channels.Tui);
     var agent = new sharpclaw.Agents.MainAgent(
-        bootstrap.Config, bootstrap.MemoryStore, bootstrap.CommandSkills, chatIO: chatWindow);
+        bootstrap.Config, bootstrap.MemoryStore, bootstrap.CommandSkills, chatIO: chatWindow, bootstrap.AgentContext);
 
     // 在后台线程启动智能体循环
     _ = Task.Run(() => agent.RunAsync());

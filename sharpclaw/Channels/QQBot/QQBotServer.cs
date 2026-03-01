@@ -78,7 +78,8 @@ public static class QQBotServer
             bootstrap.Config,
             bootstrap.MemoryStore,
             bootstrap.CommandSkills,
-            chatIO: chatIO);
+            chatIO: chatIO, 
+            bootstrap.AgentContext);
 
         // 启动 Bot 连接
         using var cts = new CancellationTokenSource();

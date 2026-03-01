@@ -1,3 +1,5 @@
+using sharpclaw.Core;
+using sharpclaw.Core.TaskManagement;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -7,7 +9,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using sharpclaw.Core.TaskManagement;
 
 namespace sharpclaw.Commands;
 
@@ -18,8 +19,8 @@ public class FileCommands : CommandBase
 {
     private const int CatReadPageLines = 2000;
 
-    public FileCommands(TaskManager taskManager)
-        : base(taskManager)
+    public FileCommands(TaskManager taskManager, IAgentContext agentContext)
+        : base(taskManager, agentContext)
     {
     }
 
@@ -40,7 +41,7 @@ public class FileCommands : CommandBase
                     await Task.Yield();
 
                     var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                        ? Environment.CurrentDirectory
+                        ? GetDefaultWorkspace()
                         : workingDirectory!;
 
                     var searchDir = string.IsNullOrWhiteSpace(searchPath)
@@ -150,7 +151,7 @@ public class FileCommands : CommandBase
                     await Task.Yield();
 
                     var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                        ? Environment.CurrentDirectory
+                        ? GetDefaultWorkspace()
                         : workingDirectory!;
 
                     var searchDir = string.IsNullOrWhiteSpace(searchPath)
@@ -302,7 +303,7 @@ public class FileCommands : CommandBase
                 try
                 {
                     var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                        ? Environment.CurrentDirectory
+                        ? GetDefaultWorkspace()
                         : workingDirectory!;
 
                     var full = Path.GetFullPath(filePath, baseDir);
@@ -380,7 +381,7 @@ public class FileCommands : CommandBase
                 try
                 {
                     var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                        ? Environment.CurrentDirectory
+                        ? GetDefaultWorkspace()
                         : workingDirectory!;
 
                     var full = Path.GetFullPath(filePath, baseDir);
@@ -497,7 +498,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(filePath, baseDir);
@@ -652,7 +653,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(path, baseDir);
@@ -685,7 +686,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(path, baseDir);
@@ -742,7 +743,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var srcFull = Path.GetFullPath(src, baseDir);
@@ -797,7 +798,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(filePath, baseDir);
@@ -830,7 +831,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(filePath, baseDir);
@@ -857,7 +858,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(path, baseDir);
@@ -881,7 +882,7 @@ public class FileCommands : CommandBase
         try
         {
             var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
+                ? GetDefaultWorkspace()
                 : workingDirectory!;
 
             var full = Path.GetFullPath(path, baseDir);
@@ -939,7 +940,7 @@ public class FileCommands : CommandBase
                     await Task.Yield();
 
                     var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                        ? Environment.CurrentDirectory
+                        ? GetDefaultWorkspace()
                         : workingDirectory!;
 
                     var target = string.IsNullOrWhiteSpace(path) ? "." : path!;
@@ -1072,15 +1073,5 @@ public class FileCommands : CommandBase
             runInBackground: false, // 设为 false 等待执行完毕
             timeoutMs: 30000
         );
-    }
-
-    private static List<string> ToLinesFromEscaped(string? textEscaped)
-    {
-        var text = textEscaped ?? string.Empty;
-        text = text.Replace("\r\n", "\n").Replace("\r", "\n");
-
-        if (text.Length == 0) return new List<string>();
-
-        return text.Split('\n', StringSplitOptions.None).ToList();
     }
 }
