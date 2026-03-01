@@ -153,16 +153,6 @@ public class MainAgent
                 {
                     Instructions = systemPrompt,
                     Tools = tools
-                },
-                ChatHistoryProviderFactory = (ctx, ct) =>
-                {
-                    _historyProvider = new InMemoryChatHistoryProvider(
-                        _reducer,
-                        ctx.SerializedState,
-                        ctx.JsonSerializerOptions,
-                        InMemoryChatHistoryProvider.ChatReducerTriggerEvent.BeforeMessagesRetrieval
-                    );
-                    return new ValueTask<ChatHistoryProvider>(_historyProvider);
                 }
             });
     }

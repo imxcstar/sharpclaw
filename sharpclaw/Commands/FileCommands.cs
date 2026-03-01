@@ -1050,7 +1050,14 @@ public class FileCommands : CommandBase
                     if (isTruncated)
                     {
                         ctx.WriteStdoutLine($"⚠️ WARNING: Output truncated at {maxEntries} entries to prevent context overflow.");
-                        ctx.WriteStdoutLine($"💡 TIP: If you need to search for a specific file, use 'FindFiles' instead of exploring manually.");
+                        if (recursive)
+                        {
+                            ctx.WriteStdoutLine($"💡 TIP: The directory is too large for recursive listing. Please explore layer by layer (recursive=false) or use 'FindFiles' to locate specific files.");
+                        }
+                        else
+                        {
+                            ctx.WriteStdoutLine($"💡 TIP: If you need to search for a specific file, use 'FindFiles' instead of exploring manually.");
+                        }
                     }
                     else
                     {
