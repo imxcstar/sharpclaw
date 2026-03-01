@@ -46,57 +46,81 @@ public class ConversationArchiver
         _tools = tools;
         _historyDir = Path.Combine(_sessionDirPath, "history");
 
-        _summarizerPrompt = $"""
-            你是一个对话摘要助手。你的任务是为被裁剪的对话生成尽可能详细的摘要，并保存到近期记忆文件中。
+        _summarizerPrompt = @$"""
+            你是一个面向任务、进度和决策的高级记忆摘要助手。你的任务是提取被裁剪对话中的核心信息，并以高信息密度的结构化格式保存到“近期记忆”文件中。这能确保 AI 在漫长的开发过程中，准确记住目标、执行细节、决策原因以及下一步动作，同时避免重复踩坑。
 
             ## 可用的记忆文件
 
             | 记忆类型 | 文件路径 | 权限 |
             |---------|---------|------|
-            | 工作记忆（被裁剪的对话） | {_workingMemoryPath} | 只读 |
-            | 近期记忆（对话摘要） | {_recentMemoryPath} | 读写 |
-            | 核心记忆（长期重要信息） | {_primaryMemoryPath} | 只读 |
+            | 工作记忆（被裁剪对话） | {_workingMemoryPath} | 只读 |
+            | 近期记忆（进度摘要） | {_recentMemoryPath} | 读写 |
+            | 核心记忆（长期偏好） | {_primaryMemoryPath} | 只读 |
 
-            向量记忆可通过 SearchMemory / GetRecentMemories 查询（只读）。
+            **重要：你只能写入近期记忆文件，禁止修改其他文件。**
 
-            **重要：你只能写入近期记忆文件，其他记忆文件仅供参考，禁止修改。**
+            ## 提取与写入规则
 
-            ## 流程
+            每次生成摘要时，你必须严格按照以下维度提炼内容。**注意控制篇幅：禁止大段粘贴代码，必须使用函数名、文件路径或关键的 1~2 行代码指代。**
 
-            1. 完整读取工作记忆文件，获取被裁剪的对话内容
-            2. 可选：读取其他记忆文件或搜索向量记忆作为参考，了解已有上下文，避免重复
-            3. 生成详细摘要
-            4. 将摘要追加到近期记忆文件末尾，内容格式必须为：
-               ### yyyy-MM-dd HH:mm（当前时间）
-               摘要正文
+            1. **用户需求 (Goal)**：当前阶段的核心目标或用户的原始指令。
+            2. **执行与决策 (Execution & Rationale)**：
+               - **干了什么**：具体修改了哪些文件（带路径）、运行了什么关键命令。
+               - **关键细节**：核心报错信息、重要的配置项变更。
+               - **决策与避坑**：为什么采用方案 A 而不是方案 B？排除了哪些错误方向？用户的负面反馈（绝对不要做什么）。
+            3. **遗留问题 (Caveats)**：当前代码中存在的临时处理（Mock 数据、Hardcode）、已知的副作用或未来需要重构的技术债。如果没有则写“无”。
+            4. **任务状态 (Status)**：[已完成 / 进行中 / 被阻塞] - [简短说明当前卡点或进度]。
+            5. **下一步计划 (Next Steps)**：紧接着需要执行的 1~3 个具体动作。
 
-               （末尾空两行\n\n）
+            ## 写入格式（严格遵循）
 
-            ## 摘要要求
+            将摘要追加到近期记忆文件末尾，使用以下结构：
 
-            - 尽量保留对话中的所有有意义的信息，宁多勿少
-            - 保留具体的操作细节：分析了哪个文件、发现了什么问题、做了什么修改、修改的具体内容
-            - 保留完整的上下文链：用户提出了什么需求 → 讨论了哪些方案 → 最终选择了什么 → 执行了什么操作 → 结果如何
-            - 保留目标和进展：当前在做什么、完成了哪些步骤、还有哪些待完成、遇到了什么阻碍
-            - 保留用户表达的偏好、需求、反馈（包括否定的反馈，如"不要这样做"）
-            - 保留关键的代码片段、文件路径、命令、配置项、错误信息
-            - 保留数据、数值、结论、决策及其理由
-            - 按对话的时间顺序组织，保持事件的因果关系
-            - 忽略纯寒暄、重复确认等零信息量内容
-            - 工具调用保留调用目的和关键结果，省略冗长的原始输出
+            ### yyyy-MM-dd HH:mm
+            - **🎯 需求**：[一句话概括]
+            - **🛠️ 执行与决策**：
+              - [操作]：...
+              - [决策/避坑]：...
+            - **⚠️ 遗留**：[说明临时妥协或技术债 / 无]
+            - **📌 状态**：[已完成 / 进行中 / 被阻塞] - ...
+            - **🚀 下一步**：
+              - [动作1]
+              - [动作2]
 
-            ## 去重要求
+            （末尾空两行\n\n）
 
-            - 写入前必须先读取近期记忆文件，检查是否已有相同或高度相似的内容
-            - 如果某条信息已经在近期记忆中存在（即使措辞不同但语义相同），不要重复写入
-            - 只写入真正新增的、尚未被近期记忆记录的信息
-            - 如果对话中的所有有意义信息都已被近期记忆覆盖，则不需要写入任何内容
+            ## 去重与优化
+            - 写入前必须读取近期记忆。若只是状态更新，不要重复记录冗长的历史操作，重点更新“状态”和“下一步”。
+            - 提取真正有信息量的决策和代码定位，过滤无用的寒暄和过程性废话。
 
-            ## 写入方式
+            ## 示例
 
-            - 摘要必须写入近期记忆文件，不要只输出文本
-            - 使用追加工具写入时，不要一次性输出全部内容，应分块多次追加，每次追加一小段
-            - 只有对话内容完全没有新增有意义信息时，才可以不保存
+            ```markdown
+            ### 2026-03-01 15:20
+            - **🎯 需求**：优化后端 `/api/products` 接口的响应速度，用户反馈查询太慢（超过 2 秒）。
+            - **🛠️ 执行与决策**：
+              - [操作]：分析了 `src/services/productService.js`，发现慢查询是因为关联了 5 张表且没有建立索引。
+              - [操作]：通过 TypeORM 迁移文件 `src/migration/170928391_AddProductIndex.ts` 为 `category_id` 和 `status` 字段添加了复合索引。
+              - [决策/避坑]：原本考虑引入 Redis 做缓存，但**被用户否决**。用户指出当前服务器内存吃紧，且商品数据实时性要求高，决定优先通过数据库索引解决。绝对不要在此接口引入外部缓存组件。
+            - **⚠️ 遗留**：无。
+            - **📌 状态**：进行中 - 索引迁移文件已生成，但尚未在测试库运行 `migration:run`。
+            - **🚀 下一步**：
+              - 执行 TypeORM 迁移命令同步数据库结构。
+              - 使用压测脚本或 Postman 重新测试接口响应时间，验证索引是否生效。
+
+
+            ### 2026-03-01 16:05
+            - **🎯 需求**：对接第三方支付接口（Stripe），实现基础的 Checkout Session 创建逻辑。
+            - **🛠️ 执行与决策**：
+              - [操作]：安装 `stripe` SDK，在 `src/controllers/paymentController.js` 中实现了 `createCheckoutSession` 方法。
+              - [操作]：配置了成功跳转的 `success_url` 和取消的 `cancel_url`。
+              - [决策/避坑]：在测试 Webhook 签名验证时一直报 `400 Invalid Signature`。排查发现是 Express 的全局 `express.json()` 中间件破坏了 Stripe 需要的 raw body。**解决方案**：在路由层将 webhook 接口抽离，单独使用 `express.raw({{type: 'application/json'}})` 进行解析。这个坑以后对接任何 Webhook 都要注意。
+            - **⚠️ 遗留**：当前 `.env` 中的 `STRIPE_SECRET_KEY` 使用的是测试环境的 Key（`sk_test_...`），且 Webhook 的本地联调依赖 Stripe CLI 转发。
+            - **📌 状态**：已完成 - Checkout 流程及 Webhook 签名验证跑通，订单状态可正常更新为 `PAID`。
+            - **🚀 下一步**：
+              - 完善 Webhook 中的业务逻辑（如：支付成功后给用户发送通知邮件）。
+              - （询问用户）是否需要开始开发前端的支付按钮和跳转页面？
+            ```
             """;
 
         _consolidatorPrompt = $"""
@@ -173,11 +197,8 @@ public class ConversationArchiver
         if (trimmedMessages.Count == 0)
             return new ArchiveResult(ReadFile(_recentMemoryPath), ReadFile(_primaryMemoryPath));
 
-        // 并行：保存历史文件 + 摘要 Agent 读取工作记忆并生成摘要
-        var saveTask = SaveHistoryFileAsync(trimmedMessages, cancellationToken);
-        var summaryTask = SummarizeAsync(cancellationToken);
-
-        await Task.WhenAll(saveTask, summaryTask);
+        // 摘要 Agent 读取工作记忆并生成摘要
+        await SummarizeAsync(cancellationToken);
 
         // 检查近期记忆是否溢出，溢出则巩固 Agent 提炼到核心记忆
         var recentMemory = ReadFile(_recentMemoryPath) ?? "";
@@ -297,66 +318,6 @@ public class ConversationArchiver
             sections.Add(current.ToString());
 
         return sections;
-    }
-
-    #endregion
-
-    #region 历史文件保存
-
-    private async Task SaveHistoryFileAsync(
-        IReadOnlyList<ChatMessage> messages,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            Directory.CreateDirectory(_historyDir);
-
-            var fileName = $"{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.md";
-            var filePath = Path.Combine(_historyDir, fileName);
-
-            var sb = new StringBuilder();
-            sb.Append($"# 对话历史 {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n\n");
-
-            foreach (var msg in messages)
-            {
-                if (msg.Role == ChatRole.User)
-                {
-                    var text = string.Join("", msg.Contents.OfType<TextContent>()
-                        .Where(t => !string.IsNullOrWhiteSpace(t.Text))
-                        .Select(t => t.Text.Trim()));
-                    if (!string.IsNullOrWhiteSpace(text))
-                        sb.Append($"### 用户\n\n{text}\n\n");
-                    continue;
-                }
-
-                foreach (var content in msg.Contents)
-                {
-                    switch (content)
-                    {
-                        case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
-                            sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
-                            break;
-                        case FunctionCallContent call:
-                            var args = call.Arguments is not null
-                                ? JsonSerializer.Serialize(call.Arguments)
-                                : "";
-                            sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
-                            break;
-                        case FunctionResultContent result:
-                            var resultText = result.Result?.ToString() ?? "";
-                            sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
-                            break;
-                    }
-                }
-            }
-
-            await File.WriteAllTextAsync(filePath, sb.ToString(), cancellationToken);
-            AppLogger.Log($"[Archive] 已保存历史文件: {fileName}（{messages.Count} 条消息）");
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Log($"[Archive] 历史文件保存失败: {ex.Message}");
-        }
     }
 
     #endregion

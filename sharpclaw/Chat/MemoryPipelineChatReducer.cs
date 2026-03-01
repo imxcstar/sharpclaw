@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using sharpclaw.Agents;
 using sharpclaw.UI;
@@ -111,6 +112,7 @@ public class MemoryPipelineChatReducer : IChatReducer
         {
             // 进入裁剪，清空累积的工作记忆
             OldWorkingMemoryContent = string.Empty;
+            var workingMemoryBuffer = WorkingMemoryBuffer.ToString();
             WorkingMemoryBuffer.Clear();
 
             // 向量记忆保存（归档前，确保对话内容被向量记忆捕获）
@@ -135,12 +137,12 @@ public class MemoryPipelineChatReducer : IChatReducer
             }
 
             // 归档（摘要 → 近期记忆 → 溢出巩固核心记忆）
+            await SaveHistoryFileAsync(workingMemoryBuffer, conversationMessages, cancellationToken);
             if (_archiver is not null)
             {
                 try
                 {
-                    archiveResult = await _archiver.ArchiveAsync(
-                        conversationMessages, cancellationToken);
+                    archiveResult = await _archiver.ArchiveAsync(conversationMessages, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -176,6 +178,75 @@ public class MemoryPipelineChatReducer : IChatReducer
         LastMessages = conversationMessages;
         IEnumerable<ChatMessage> result = [.. systemMessages, .. LastMessages];
         return result;
+    }
+
+    private async Task SaveHistoryFileAsync(
+        string workingMemory,
+        IReadOnlyList<ChatMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(WorkingMemoryPath);
+            if (dir == null)
+            {
+                AppLogger.Log($"[Archive] 无法获取工作记忆目录，历史文件保存失败");
+                return;
+            }
+            if (!Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            var historyDir = Path.Combine(dir, "history");
+            if (!Directory.Exists(historyDir))
+                Directory.CreateDirectory(historyDir);
+
+            var fileName = $"{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.md";
+            var filePath = Path.Combine(historyDir, fileName);
+
+            var sb = new StringBuilder();
+            sb.Append($"# 对话历史 {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n\n");
+
+            sb.AppendLine(workingMemory);
+
+            foreach (var msg in messages)
+            {
+                if (msg.Role == ChatRole.User)
+                {
+                    var text = string.Join("", msg.Contents.OfType<TextContent>()
+                        .Where(t => !string.IsNullOrWhiteSpace(t.Text))
+                        .Select(t => t.Text.Trim()));
+                    if (!string.IsNullOrWhiteSpace(text))
+                        sb.Append($"### 用户\n\n{text}\n\n");
+                    continue;
+                }
+
+                foreach (var content in msg.Contents)
+                {
+                    switch (content)
+                    {
+                        case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
+                            sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
+                            break;
+                        case FunctionCallContent call:
+                            var args = call.Arguments is not null
+                                ? JsonSerializer.Serialize(call.Arguments)
+                                : "";
+                            sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
+                            break;
+                        case FunctionResultContent result:
+                            var resultText = result.Result?.ToString() ?? "";
+                            sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
+                            break;
+                    }
+                }
+            }
+
+            await File.WriteAllTextAsync(filePath, sb.ToString(), cancellationToken);
+            AppLogger.Log($"[Archive] 已保存历史文件: {fileName}（{messages.Count} 条消息）");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[Archive] 历史文件保存失败: {ex.Message}");
+        }
     }
 
     private void SaveWorkingMemory()
