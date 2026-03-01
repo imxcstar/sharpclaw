@@ -34,6 +34,7 @@ public static class AgentBootstrap
             systemCommands.ExitProgram,
 
             fileCommands.CommandDir,
+            fileCommands.CommandGetLineCount,
             fileCommands.CommandCat,
             fileCommands.FileExists,
             fileCommands.GetFileInfo,

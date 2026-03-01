@@ -16,7 +16,7 @@ namespace sharpclaw.Commands;
 /// </summary>
 public class FileCommands : CommandBase
 {
-    private const int CatReadPageLines = 500;
+    private const int CatReadPageLines = 2000;
 
     public FileCommands(TaskManager taskManager)
         : base(taskManager)
@@ -483,13 +483,12 @@ public class FileCommands : CommandBase
         );
     }
 
-    [Description("Read file contents with pagination (500 lines per page, includes line numbers)")]
-    public string CommandCat(
-        [Description("File path to read")] string filePath,
-        [Description("Starting line number (1-based)")] int fromLine = 1,
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Get the total number of lines in a file. Extremely useful to check file size before using CommandCat to avoid reading huge files all at once.")]
+    public string CommandGetLineCount(
+    [Description("Absolute or relative file path to check")] string filePath,
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
-        var display = $"cat {filePath} --from-line {fromLine}";
+        var display = $"wc -l {filePath}";
 
         return RunNative(
             displayCommand: display,
@@ -505,11 +504,106 @@ public class FileCommands : CommandBase
 
                     if (!File.Exists(full))
                     {
-                        ctx.WriteStderrLine($"File not found: {full}");
+                        ctx.WriteStderrLine($"Error: File not found: {full}");
                         return 2;
                     }
 
-                    if (fromLine < 1) fromLine = 1;
+                    int lineCount = 0;
+
+                    // 使用与 CommandCat 相同的高效异步流读取，不把整个文件加载进内存
+                    await using var fs = new FileStream(
+                        full,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        bufferSize: 64 * 1024,
+                        options: FileOptions.Asynchronous | FileOptions.SequentialScan
+                    );
+
+                    using var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+
+                    // 逐行快速统计，不保留字符串内容
+                    while (await sr.ReadLineAsync().ConfigureAwait(false) != null)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        lineCount++;
+                    }
+
+                    // 给出清晰、结构化的输出
+                    ctx.WriteStdoutLine($"File: {Path.GetFileName(full)}");
+                    ctx.WriteStdoutLine($"Total Lines: {lineCount}");
+
+                    // 附带一个贴心的提示，引导 LLM 进行下一步决策
+                    if (lineCount > 500)
+                    {
+                        ctx.WriteStdoutLine($"Tip: This is a large file. Please use CommandCat with 'startLine' and 'endLine' to read it in smaller chunks.");
+                    }
+
+                    return 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    ctx.WriteStderrLine("Operation canceled.");
+                    return 137;
+                }
+                catch (Exception ex)
+                {
+                    ctx.WriteStderrLine($"Error ({ex.GetType().Name}): {ex.Message}");
+                    return 1;
+                }
+            },
+            runInBackground: false,
+            timeoutMs: 0
+        );
+    }
+
+    [Description("Read file contents with pagination and line numbers. BEST PRACTICE: For unknown files, use CommandGetLineCount first to check file size. Then use startLine and endLine here to read specific blocks of code.")]
+    public string CommandCat(
+    [Description("Absolute or relative file path to read")] string filePath,
+    [Description("Starting line number (1-based, default: 1)")] int startLine = 1,
+    [Description("Ending line number (inclusive). Specify this to read a precise chunk! Leave as -1 to read up to max limit.")] int endLine = -1,
+    [Description("Working directory (optional)")] string workingDirectory = "")
+    {
+        var display = endLine > 0
+            ? $"cat {filePath} --lines {startLine}-{endLine}"
+            : $"cat {filePath} --from-line {startLine}";
+
+        return RunNative(
+            displayCommand: display,
+            runner: async (ctx, ct) =>
+            {
+                try
+                {
+                    var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                        ? Environment.CurrentDirectory
+                        : workingDirectory!;
+
+                    var full = Path.GetFullPath(filePath, baseDir);
+
+                    if (!File.Exists(full))
+                    {
+                        ctx.WriteStderrLine($"Error: File not found: {full}");
+                        return 2;
+                    }
+
+                    if (startLine < 1) startLine = 1;
+
+                    int maxLinesToRead = CatReadPageLines; // 默认分页大小 (例如 500)
+                    bool isCapped = false;
+
+                    // 动态防御：如果 LLM 贪心请求了过大的范围（比如 1 到 10000），强制截断并警告
+                    if (endLine > 0 && endLine >= startLine)
+                    {
+                        int requestedLines = endLine - startLine + 1;
+                        if (requestedLines <= maxLinesToRead)
+                        {
+                            maxLinesToRead = requestedLines;
+                        }
+                        else
+                        {
+                            isCapped = true; // 标记请求被截断
+                        }
+                    }
 
                     await using var fs = new FileStream(
                         full,
@@ -523,34 +617,49 @@ public class FileCommands : CommandBase
                     using var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
 
                     int currentLineNo = 0;
-                    while (currentLineNo < fromLine - 1)
+
+                    while (currentLineNo < startLine - 1)
                     {
                         ct.ThrowIfCancellationRequested();
                         var skip = await sr.ReadLineAsync().ConfigureAwait(false);
                         if (skip == null)
                         {
+                            ctx.WriteStderrLine($"Warning: Start line {startLine} exceeds file length ({currentLineNo} lines). Tip: Use CommandGetLineCount to check the actual file size.");
                             return 0;
                         }
                         currentLineNo++;
                     }
 
+                    ctx.WriteStdoutLine($"--- File: {Path.GetFileName(full)} (Reading from line {startLine}) ---");
+
                     int emitted = 0;
-                    while (emitted < CatReadPageLines)
+                    while (emitted < maxLinesToRead)
                     {
                         ct.ThrowIfCancellationRequested();
                         var line = await sr.ReadLineAsync().ConfigureAwait(false);
                         if (line == null) break;
 
                         currentLineNo++;
-                        ctx.WriteStdoutLine($"[{currentLineNo}]: {line}");
+                        ctx.WriteStdoutLine($"{currentLineNo,4} | {line}");
                         emitted++;
                     }
 
                     ct.ThrowIfCancellationRequested();
+
                     var lookahead = await sr.ReadLineAsync().ConfigureAwait(false);
-                    if (lookahead != null)
+
+                    ctx.WriteStdoutLine("--- End of Read ---");
+
+                    // 动态引导逻辑：根据不同的情况给予 LLM 不同的下一步建议
+                    if (isCapped)
                     {
-                        ctx.WriteStdoutLine("--more--");
+                        ctx.WriteStdoutLine($"\n[System Warning]: Requested line range was too large and has been capped at {CatReadPageLines} lines to save context limit.");
+                        ctx.WriteStdoutLine($"👉 Tip: Use CommandGetLineCount to understand the file structure, then use CommandCat with precise startLine and endLine.");
+                    }
+                    else if (lookahead != null && (endLine <= 0 || currentLineNo < endLine))
+                    {
+                        ctx.WriteStdoutLine($"\n--more-- (File continues below line {currentLineNo})");
+                        ctx.WriteStdoutLine($"👉 Tip: To see the rest, use CommandCat with startLine={currentLineNo + 1}. Unsure how big the file is? Use CommandGetLineCount first!");
                     }
 
                     return 0;
@@ -562,7 +671,7 @@ public class FileCommands : CommandBase
                 }
                 catch (Exception ex)
                 {
-                    ctx.WriteStderrLine($"{ex.GetType().Name}: {ex.Message}");
+                    ctx.WriteStderrLine($"Error ({ex.GetType().Name}): {ex.Message}");
                     return 1;
                 }
             },
