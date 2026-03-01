@@ -23,106 +23,13 @@ public class FileCommands : CommandBase
     {
     }
 
-    [Description("Check if a file or directory exists")]
-    public string FileExists(
-        [Description("Path to check")] string path,
-        [Description("Working directory (optional)")] string workingDirectory = "")
-    {
-        try
-        {
-            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
-                : workingDirectory!;
-
-            var full = Path.GetFullPath(path, baseDir);
-            var fileExists = File.Exists(full);
-            var dirExists = Directory.Exists(full);
-
-            return Serialize(new
-            {
-                ok = true,
-                path = full,
-                exists = fileExists || dirExists,
-                isFile = fileExists,
-                isDirectory = dirExists
-            });
-        }
-        catch (Exception ex)
-        {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}", path });
-        }
-    }
-
-    [Description("Get file or directory metadata (size, timestamps, attributes)")]
-    public string GetFileInfo(
-        [Description("Path to file or directory")] string path,
-        [Description("Working directory (optional)")] string workingDirectory = "")
-    {
-        try
-        {
-            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
-                : workingDirectory!;
-
-            var full = Path.GetFullPath(path, baseDir);
-
-            if (File.Exists(full))
-            {
-                var fi = new FileInfo(full);
-                return Serialize(new
-                {
-                    ok = true,
-                    path = full,
-                    type = "file",
-                    exists = true,
-                    size = fi.Length,
-                    createdUtc = fi.CreationTimeUtc.ToString("O"),
-                    modifiedUtc = fi.LastWriteTimeUtc.ToString("O"),
-                    accessedUtc = fi.LastAccessTimeUtc.ToString("O"),
-                    attributes = fi.Attributes.ToString(),
-                    isReadOnly = fi.IsReadOnly,
-                    extension = fi.Extension
-                });
-            }
-            else if (Directory.Exists(full))
-            {
-                var di = new DirectoryInfo(full);
-                return Serialize(new
-                {
-                    ok = true,
-                    path = full,
-                    type = "directory",
-                    exists = true,
-                    createdUtc = di.CreationTimeUtc.ToString("O"),
-                    modifiedUtc = di.LastWriteTimeUtc.ToString("O"),
-                    accessedUtc = di.LastAccessTimeUtc.ToString("O"),
-                    attributes = di.Attributes.ToString()
-                });
-            }
-            else
-            {
-                return Serialize(new
-                {
-                    ok = true,
-                    path = full,
-                    type = "none",
-                    exists = false
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}", path });
-        }
-    }
-
-    [Description("Find files by name pattern (supports wildcards like *.txt)")]
+    [Description("Find files by name pattern (e.g., *.cs, test*.txt). BEST PRACTICE: Use this to quickly locate files, then use CommandCat to read their contents.")]
     public string FindFiles(
-        [Description("Search pattern (e.g., *.cs, test*.txt, or exact filename)")] string pattern,
-        [Description("Directory to search in (defaults to current directory)")] string searchPath = "",
-        [Description("Search recursively in subdirectories")] bool recursive = true,
-        [Description("Maximum number of results to return")] int maxResults = 100,
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Search pattern (e.g., *.cs, test*.txt, or exact filename)")] string pattern,
+    [Description("Directory to search in (defaults to current directory)")] string searchPath = "",
+    [Description("Search recursively in subdirectories")] bool recursive = true,
+    [Description("Maximum number of results to return")] int maxResults = 100,
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
         return RunNative(
             displayCommand: $"find {pattern}",
@@ -142,46 +49,79 @@ public class FileCommands : CommandBase
 
                     if (!Directory.Exists(searchDir))
                     {
-                        ctx.WriteStderrLine($"Directory not found: {searchDir}");
+                        ctx.WriteStderrLine($"Error: Directory not found: {searchDir}");
                         return 2;
                     }
 
-                    var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+                    var enumerationOptions = new EnumerationOptions
+                    {
+                        IgnoreInaccessible = true,
+                        RecurseSubdirectories = recursive,
+                        MatchCasing = MatchCasing.PlatformDefault
+                    };
+
+                    string[] ignoredDirs = {
+                    $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"
+                    };
+
                     var results = new List<string>();
 
                     try
                     {
-                        var files = Directory.EnumerateFiles(searchDir, pattern, searchOption);
+                        var files = Directory.EnumerateFiles(searchDir, pattern, enumerationOptions);
                         foreach (var file in files)
                         {
                             ct.ThrowIfCancellationRequested();
+
+                            if (ignoredDirs.Any(dir => file.Contains(dir, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                continue;
+                            }
+
                             results.Add(file);
                             if (results.Count >= maxResults)
                                 break;
                         }
                     }
-                    catch (UnauthorizedAccessException ex)
+                    catch (Exception ex)
                     {
-                        ctx.WriteStderrLine($"Access denied: {ex.Message}");
+                        ctx.WriteStderrLine($"Warning during search: {ex.Message}");
                     }
 
-                    var output = Serialize(new
-                    {
-                        ok = true,
-                        pattern,
-                        searchPath = searchDir,
-                        recursive,
-                        count = results.Count,
-                        truncated = results.Count >= maxResults,
-                        files = results
-                    });
+                    // --- 构建友好的纯文本输出 ---
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"--- Search Results for '{pattern}' ---");
+                    sb.AppendLine($"Directory: {searchDir}");
+                    sb.AppendLine($"Total Found: {results.Count}{(results.Count >= maxResults ? " (TRUNCATED - reached limit)" : "")}");
+                    sb.AppendLine("----------------------------------------");
 
-                    ctx.WriteStdoutLine(output);
+                    if (results.Count == 0)
+                    {
+                        sb.AppendLine("No files found matching the pattern.");
+                    }
+                    else
+                    {
+                        for (int i = 0; i < results.Count; i++)
+                        {
+                            sb.AppendLine($"{i + 1}. {results[i]}");
+                        }
+                    }
+
+                    sb.AppendLine("----------------------------------------");
+                    if (results.Count > 0)
+                    {
+                        sb.AppendLine("💡 TIP: Use CommandCat to read the content of the files you are interested in.");
+                    }
+
+                    ctx.WriteStdoutLine(sb.ToString());
                     return 0;
                 }
                 catch (Exception ex)
                 {
-                    ctx.WriteStderrLine($"{ex.GetType().Name}: {ex.Message}");
+                    ctx.WriteStderrLine($"Error ({ex.GetType().Name}): {ex.Message}");
                     return 1;
                 }
             },
@@ -190,16 +130,16 @@ public class FileCommands : CommandBase
         );
     }
 
-    [Description("Search for text content within files (like grep)")]
+    [Description("Search for text content within files (like grep). BEST PRACTICE: Use this to find where variables or functions are defined. Once you have the file and line number, use CommandCat with startLine and endLine to see the full context.")]
     public string SearchInFiles(
-        [Description("Text or regex pattern to search for")] string searchText,
-        [Description("File pattern to search in (e.g., *.cs, *.txt)")] string filePattern = "*.*",
-        [Description("Directory to search in (defaults to current directory)")] string searchPath = "",
-        [Description("Search recursively in subdirectories")] bool recursive = true,
-        [Description("Use regex pattern matching")] bool useRegex = false,
-        [Description("Case-insensitive search")] bool ignoreCase = true,
-        [Description("Maximum number of matches to return")] int maxMatches = 50,
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Text or regex pattern to search for")] string searchText,
+    [Description("File pattern to search in (e.g., *.cs, *.txt)")] string filePattern = "*.*",
+    [Description("Directory to search in (defaults to current directory)")] string searchPath = "",
+    [Description("Search recursively in subdirectories")] bool recursive = true,
+    [Description("Use regex pattern matching")] bool useRegex = false,
+    [Description("Case-insensitive search")] bool ignoreCase = true,
+    [Description("Maximum number of matches to return")] int maxMatches = 50,
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
         return RunNative(
             displayCommand: $"search '{searchText}' in {filePattern}",
@@ -219,267 +159,132 @@ public class FileCommands : CommandBase
 
                     if (!Directory.Exists(searchDir))
                     {
-                        ctx.WriteStderrLine($"Directory not found: {searchDir}");
+                        ctx.WriteStderrLine($"Error: Directory not found: {searchDir}");
                         return 2;
                     }
 
-                    var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                    var matches = new List<object>();
+                    var enumerationOptions = new EnumerationOptions
+                    {
+                        IgnoreInaccessible = true,
+                        RecurseSubdirectories = recursive,
+                        MatchCasing = MatchCasing.PlatformDefault
+                    };
+
+                    string[] ignoredDirs = {
+                    $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                    $"{Path.DirectorySeparatorChar}.vs{Path.DirectorySeparatorChar}"
+                    };
+
+                    // 改用字典按文件分组存放匹配结果，对 LLM 阅读极其友好
+                    var groupedMatches = new Dictionary<string, List<(int Line, string Content)>>();
+                    int totalMatches = 0;
+                    bool isTruncated = false;
+
                     var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
                     Regex? regex = null;
 
                     if (useRegex)
                     {
                         var options = ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None;
-                        regex = new Regex(searchText, options);
+                        regex = new Regex(searchText, options | RegexOptions.Compiled);
                     }
 
                     try
                     {
-                        var files = Directory.EnumerateFiles(searchDir, filePattern, searchOption);
+                        var files = Directory.EnumerateFiles(searchDir, filePattern, enumerationOptions);
                         foreach (var file in files)
                         {
                             ct.ThrowIfCancellationRequested();
 
+                            if (ignoredDirs.Any(dir => file.Contains(dir, StringComparison.OrdinalIgnoreCase))) continue;
+
                             try
                             {
-                                var lines = File.ReadAllLines(file);
-                                for (int i = 0; i < lines.Length; i++)
+                                int lineNum = 0;
+                                foreach (var line in File.ReadLines(file))
                                 {
-                                    var line = lines[i];
+                                    lineNum++;
                                     bool found = useRegex
                                         ? regex!.IsMatch(line)
                                         : line.Contains(searchText, comparison);
 
                                     if (found)
                                     {
-                                        matches.Add(new
+                                        if (!groupedMatches.ContainsKey(file))
                                         {
-                                            file,
-                                            line = i + 1,
-                                            content = line.Length > 200 ? line.Substring(0, 200) + "..." : line
-                                        });
+                                            groupedMatches[file] = new List<(int, string)>();
+                                        }
 
-                                        if (matches.Count >= maxMatches)
+                                        // 截断过长的单行文本 (如压缩过的 JS 代码)，防止刷屏
+                                        string displayContent = line.Length > 200 ? line.Substring(0, 200) + "..." : line.Trim();
+                                        groupedMatches[file].Add((lineNum, displayContent));
+                                        totalMatches++;
+
+                                        if (totalMatches >= maxMatches)
+                                        {
+                                            isTruncated = true;
                                             goto done;
+                                        }
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                // Skip files that can't be read
-                                ctx.WriteStderrLine($"Skipped {file}: {ex.Message}");
+                                ctx.WriteStderrLine($"Skipped {Path.GetFileName(file)}: {ex.Message}");
                             }
                         }
                     }
-                    catch (UnauthorizedAccessException ex)
+                    catch (Exception ex)
                     {
-                        ctx.WriteStderrLine($"Access denied: {ex.Message}");
+                        ctx.WriteStderrLine($"Warning during search: {ex.Message}");
                     }
 
                 done:
-                    var output = Serialize(new
-                    {
-                        ok = true,
-                        searchText,
-                        filePattern,
-                        searchPath = searchDir,
-                        recursive,
-                        useRegex,
-                        ignoreCase,
-                        count = matches.Count,
-                        truncated = matches.Count >= maxMatches,
-                        matches
-                    });
+                    // --- 构建高度结构化的纯文本输出 ---
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"--- Search Results for '{searchText}' ---");
+                    sb.AppendLine($"File Pattern: {filePattern}");
+                    sb.AppendLine($"Total Matches: {totalMatches}{(isTruncated ? $" (TRUNCATED at {maxMatches} limits)" : "")}");
+                    sb.AppendLine("========================================");
 
-                    ctx.WriteStdoutLine(output);
+                    if (totalMatches == 0)
+                    {
+                        sb.AppendLine("No matches found. Try modifying your search text or file pattern.");
+                    }
+                    else
+                    {
+                        // 遍历分组打印，视觉上非常清晰
+                        foreach (var kvp in groupedMatches)
+                        {
+                            sb.AppendLine($"\n📄 File: {kvp.Key}");
+                            foreach (var match in kvp.Value)
+                            {
+                                // 使用和 CommandCat 完全一致的行号格式： "   1 | code"
+                                sb.AppendLine($"  {match.Line,4} | {match.Content}");
+                            }
+                        }
+                    }
+
+                    sb.AppendLine("\n========================================");
+                    if (totalMatches > 0)
+                    {
+                        sb.AppendLine("💡 TIP: Match found! Next step: Use CommandCat with startLine/endLine to read the surrounding code context.");
+                    }
+
+                    ctx.WriteStdoutLine(sb.ToString());
                     return 0;
                 }
                 catch (Exception ex)
                 {
-                    ctx.WriteStderrLine($"{ex.GetType().Name}: {ex.Message}");
+                    ctx.WriteStderrLine($"Error ({ex.GetType().Name}): {ex.Message}");
                     return 1;
                 }
             },
             runInBackground: false,
             timeoutMs: 60000
-        );
-    }
-
-    [Description("Append text to the end of a file (creates file if it doesn't exist)")]
-    public string AppendToFile(
-        [Description("File path")] string filePath,
-        [Description("Text content to append")] string content,
-        [Description("Working directory (optional)")] string workingDirectory = "")
-    {
-        try
-        {
-            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
-                : workingDirectory!;
-
-            var full = Path.GetFullPath(filePath, baseDir);
-
-            var dir = Path.GetDirectoryName(full);
-            if (!string.IsNullOrWhiteSpace(dir))
-                Directory.CreateDirectory(dir);
-
-            File.AppendAllText(full, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-
-            return Serialize(new
-            {
-                ok = true,
-                action = "append",
-                file = full,
-                bytesAppended = Encoding.UTF8.GetByteCount(content)
-            });
-        }
-        catch (Exception ex)
-        {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}", filePath });
-        }
-    }
-
-    [Description("List directory contents with optional recursive listing")]
-    public string CommandDir(
-        [Description("Path to list (defaults to current directory)")] string path = "",
-        [Description("Working directory (optional)")] string workingDirectory = "",
-        [Description("Recursively list all subdirectories")] bool recursive = false)
-    {
-        var display = "dir " + (string.IsNullOrWhiteSpace(path) ? "." : path) + (recursive ? " -r" : "");
-
-        return RunNative(
-            displayCommand: display,
-            runner: async (ctx, ct) =>
-            {
-                try
-                {
-                    await Task.Yield();
-
-                    var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                        ? Environment.CurrentDirectory
-                        : workingDirectory!;
-
-                    var target = string.IsNullOrWhiteSpace(path) ? "." : path!;
-                    var full = Path.GetFullPath(target, baseDir);
-
-                    if (!Directory.Exists(full))
-                    {
-                        ctx.WriteStderrLine($"Directory not found: {full}");
-                        return 2;
-                    }
-
-                    var root = new DirectoryInfo(full);
-
-                    ctx.WriteStdoutLine($"Directory: {root.FullName}");
-                    ctx.WriteStdoutLine($"UTC Now : {DateTimeOffset.UtcNow:O}");
-                    ctx.WriteStdoutLine("");
-
-                    void SortEntries(FileSystemInfo[] entries)
-                    {
-                        Array.Sort(entries, (a, b) =>
-                        {
-                            var ad = a is DirectoryInfo;
-                            var bd = b is DirectoryInfo;
-                            if (ad != bd) return ad ? -1 : 1;
-                            return StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name);
-                        });
-                    }
-
-                    void WriteEntry(FileSystemInfo e, int depth)
-                    {
-                        bool isDir = (e.Attributes & FileAttributes.Directory) != 0;
-                        long size = 0;
-
-                        if (!isDir)
-                        {
-                            try { size = (e as FileInfo)?.Length ?? 0; } catch { }
-                        }
-
-                        var lastUtc = SafeLastWriteTimeUtc(e);
-                        var type = isDir ? "d" : "-";
-                        var indent = new string(' ', depth * 2);
-
-                        ctx.WriteStdoutLine($"{type}\t{size}\t{lastUtc:O}\t{indent}{e.Name}");
-                    }
-
-                    void Traverse(DirectoryInfo dir, int depth)
-                    {
-                        ct.ThrowIfCancellationRequested();
-
-                        if (depth == 0)
-                            ctx.WriteStdoutLine($"d\t0\t{SafeLastWriteTimeUtc(dir):O}\t{dir.Name}");
-                        else
-                            ctx.WriteStdoutLine($"d\t0\t{SafeLastWriteTimeUtc(dir):O}\t{new string(' ', depth * 2)}{dir.Name}");
-
-                        FileSystemInfo[] entries;
-                        try
-                        {
-                            entries = dir.GetFileSystemInfos();
-                        }
-                        catch (Exception ex)
-                        {
-                            ctx.WriteStderrLine($"{ex.GetType().Name}: {ex.Message} ({dir.FullName})");
-                            return;
-                        }
-
-                        SortEntries(entries);
-
-                        foreach (var e in entries)
-                        {
-                            ct.ThrowIfCancellationRequested();
-
-                            WriteEntry(e, depth + 1);
-
-                            if (recursive && e is DirectoryInfo subDir)
-                            {
-                                var isReparsePoint = (subDir.Attributes & FileAttributes.ReparsePoint) != 0;
-                                if (!isReparsePoint)
-                                {
-                                    Traverse(subDir, depth + 1);
-                                }
-                            }
-                        }
-                    }
-
-                    if (recursive)
-                    {
-                        Traverse(root, depth: 0);
-                    }
-                    else
-                    {
-                        FileSystemInfo[] entries;
-                        try { entries = root.GetFileSystemInfos(); }
-                        catch (Exception ex)
-                        {
-                            ctx.WriteStderrLine($"{ex.GetType().Name}: {ex.Message}");
-                            return 1;
-                        }
-
-                        SortEntries(entries);
-
-                        foreach (var e in entries)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            WriteEntry(e, depth: 0);
-                        }
-                    }
-
-                    return 0;
-                }
-                catch (OperationCanceledException)
-                {
-                    ctx.WriteStderrLine("Operation canceled.");
-                    return 137;
-                }
-                catch (Exception ex)
-                {
-                    ctx.WriteStderrLine($"{ex.GetType().Name}: {ex.Message}");
-                    return 1;
-                }
-            },
-            runInBackground: true,
-            timeoutMs: 0
         );
     }
 
@@ -680,47 +485,14 @@ public class FileCommands : CommandBase
         );
     }
 
-    [Description("Create a new text file (UTF-8 encoding)")]
-    public string CommandCreateText(
-        [Description("File path to create")] string filePath,
-        [Description("File content")] string content = "",
-        [Description("Overwrite if file exists")] bool force = false,
-        [Description("Working directory (optional)")] string workingDirectory = "")
-    {
-        try
-        {
-            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
-                ? Environment.CurrentDirectory
-                : workingDirectory!;
-
-            var full = Path.GetFullPath(filePath, baseDir);
-
-            var dir = Path.GetDirectoryName(full);
-            if (!string.IsNullOrWhiteSpace(dir))
-                Directory.CreateDirectory(dir);
-
-            if (File.Exists(full) && !force)
-                return Serialize(new { ok = false, error = "File already exists (use --force to overwrite)", file = full });
-
-            content = content ?? string.Empty;
-            File.WriteAllText(full, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-
-            return Serialize(new { ok = true, action = "create-text", file = full, overwritten = force && File.Exists(full) });
-        }
-        catch (Exception ex)
-        {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}" });
-        }
-    }
-
-    [Description("Edit text file with insert/replace/delete/append operations")]
+    [Description("Edit text file with insert/replace/delete/append operations. BEST PRACTICE: ALWAYS use CommandCat to check line numbers before editing!")]
     public string CommandEditText(
-        [Description("File path to edit")] string filePath,
-        [Description("Starting line number (1-based)")] int line = 1,
-        [Description("Edit mode: insert|replace|delete|append")] string mode = "insert",
-        [Description("Number of lines to affect (for replace/delete)")] int count = 1,
-        [Description("Text content to insert/replace/append")] string text = "",
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Absolute or relative file path to edit")] string filePath,
+    [Description("Starting line number (1-based). Where to start replacing/deleting, or where to insert BEFORE.")] int line = 1,
+    [Description("Edit mode: 'insert' (before line), 'replace' (lines to endLine), 'delete' (lines to endLine), 'append' (at EOF)")] string mode = "insert",
+    [Description("Ending line number (inclusive) for replace/delete operations. E.g., line=10, endLine=12 deletes/replaces lines 10, 11, and 12.")] int endLine = -1,
+    [Description("Text content to insert/replace/append. (Not needed for delete)")] string text = "",
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
         try
         {
@@ -731,15 +503,16 @@ public class FileCommands : CommandBase
             var full = Path.GetFullPath(filePath, baseDir);
 
             if (!File.Exists(full))
-                return Serialize(new { ok = false, error = "File not found", file = full });
+                return $"Error: File not found: {full}\n💡 TIP: Use FindFiles to check the correct file path.";
 
             if (line < 1) line = 1;
-            if (count < 1) count = 1;
+            // 如果没有提供 endLine，默认只操作 startLine 这一行
+            if (endLine < 1) endLine = line;
 
             var modeLower = (mode ?? "insert").Trim().ToLowerInvariant();
 
             if ((modeLower == "insert" || modeLower == "replace" || modeLower == "append") && string.IsNullOrEmpty(text))
-                return Serialize(new { ok = false, error = "--text is required for insert/replace/append", mode = modeLower, file = full });
+                return $"Error: 'text' parameter is required for mode '{modeLower}'.";
 
             var lines = new List<string>();
             Encoding encoding;
@@ -751,6 +524,7 @@ public class FileCommands : CommandBase
                 encoding = sr.CurrentEncoding;
             }
 
+            // 假设 ToLinesFromEscaped 是当前类中已有的方法
             var newLines = ToLinesFromEscaped(text);
 
             int idx = line - 1;
@@ -774,9 +548,13 @@ public class FileCommands : CommandBase
 
                 case "replace":
                     if (idx < 0 || idx >= lines.Count)
-                        return Serialize(new { ok = false, error = "Line out of range for replace", line, file = full, lineCount = lines.Count });
+                        return $"Error: Start line {line} is out of range. The file only has {lines.Count} lines.";
 
-                    removed = Math.Min(count, lines.Count - idx);
+                    // 计算需要替换的行数 (endLine 包含在内)
+                    int linesToReplace = endLine - line + 1;
+                    if (linesToReplace < 1) return $"Error: endLine ({endLine}) cannot be less than start line ({line}).";
+
+                    removed = Math.Min(linesToReplace, lines.Count - idx);
                     lines.RemoveRange(idx, removed);
                     lines.InsertRange(idx, newLines);
                     inserted = newLines.Count;
@@ -784,43 +562,66 @@ public class FileCommands : CommandBase
 
                 case "delete":
                     if (idx < 0 || idx >= lines.Count)
-                        return Serialize(new { ok = false, error = "Line out of range for delete", line, file = full, lineCount = lines.Count });
+                        return $"Error: Start line {line} is out of range. The file only has {lines.Count} lines.";
 
-                    removed = Math.Min(count, lines.Count - idx);
+                    int linesToDelete = endLine - line + 1;
+                    if (linesToDelete < 1) return $"Error: endLine ({endLine}) cannot be less than start line ({line}).";
+
+                    removed = Math.Min(linesToDelete, lines.Count - idx);
                     lines.RemoveRange(idx, removed);
                     break;
 
                 default:
-                    return Serialize(new { ok = false, error = "Unknown mode (use insert|replace|delete|append)", mode = modeLower, file = full });
+                    return $"Error: Unknown mode '{modeLower}'. Valid modes are: insert, replace, delete, append.";
             }
 
+            // 写入文件
             var tmp = full + ".tmp." + Guid.NewGuid().ToString("N");
             File.WriteAllText(tmp, string.Join(Environment.NewLine, lines), encoding);
             File.Move(tmp, full, overwrite: true);
 
-            return Serialize(new
+            // --- 构建包含代码预览的纯文本输出 ---
+            var sb = new StringBuilder();
+            sb.AppendLine($"--- Edit Successful ---");
+            sb.AppendLine($"File: {full}");
+            sb.AppendLine($"Mode: {modeLower}");
+
+            if (modeLower == "replace" || modeLower == "delete")
+                sb.AppendLine($"Lines Removed: {removed} (Line {line} to {line + removed - 1})");
+
+            if (modeLower == "insert" || modeLower == "replace" || modeLower == "append")
+                sb.AppendLine($"Lines Inserted: {inserted}");
+
+            sb.AppendLine("\n[Preview of changes]:");
+
+            // 智能截取修改位置的上下文（上下各多看 2 行）
+            int previewStartIdx = Math.Max(0, idx - 2);
+            int previewEndIdx = Math.Min(lines.Count - 1, idx + inserted + 1);
+
+            for (int i = previewStartIdx; i <= previewEndIdx; i++)
             {
-                ok = true,
-                action = "edit-text",
-                file = full,
-                mode = modeLower,
-                line,
-                count,
-                removedLines = removed,
-                insertedLines = inserted
-            });
+                // 如果是刚才插入的行，在前面加一个 '+' 号给予强烈视觉提示
+                bool isNew = (modeLower != "delete") && (i >= idx && i < idx + inserted);
+                string marker = isNew ? "+" : " ";
+                sb.AppendLine($"{marker} {i + 1,4} | {lines[i]}");
+            }
+
+            sb.AppendLine("-----------------------");
+            sb.AppendLine("💡 TIP: Verify the preview above. If it's wrong, you can immediately use CommandEditText to fix it.");
+
+            return sb.ToString();
         }
         catch (Exception ex)
         {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}" });
+            return $"Error ({ex.GetType().Name}): {ex.Message}";
         }
     }
 
-    [Description("Create a directory (recursively creates parent directories)")]
+    [Description("Create a directory (recursively creates parent directories).")]
     public string CommandMkdir(
-        [Description("Directory path to create")] string path,
-        [Description("Ignore if directory already exists")] bool existOk = false,
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Directory path to create")] string path,
+    [Description("Ignore if directory already exists")] bool existOk = true, // 将默认值改为 true 对 LLM 更友好
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
         try
         {
@@ -833,27 +634,27 @@ public class FileCommands : CommandBase
             if (Directory.Exists(full))
             {
                 if (existOk)
-                    return Serialize(new { ok = true, action = "mkdir", path = full, existed = true });
+                    return $"✅ Success: Directory already exists (ignored): {full}";
 
-                return Serialize(new { ok = false, error = "Directory already exists (use --exist-ok to ignore)", path = full });
+                return $"❌ Error: Directory already exists: {full}\n💡 TIP: Set 'existOk' to true to ignore this error.";
             }
 
             Directory.CreateDirectory(full);
 
-            return Serialize(new { ok = true, action = "mkdir", path = full, existed = false });
+            return $"✅ Success: Directory created at: {full}";
         }
         catch (Exception ex)
         {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}" });
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
         }
     }
 
-    [Description("Delete files or directories")]
+    [Description("Delete files or directories. BEST PRACTICE: Double check the path before deleting!")]
     public string CommandDelete(
-        [Description("Path to delete")] string path,
-        [Description("Allow recursive directory deletion")] bool recursive = false,
-        [Description("Ignore if path doesn't exist; remove read-only attributes")] bool force = false,
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Path to delete")] string path,
+    [Description("Allow recursive directory deletion (required for non-empty directories)")] bool recursive = false,
+    [Description("Ignore if path doesn't exist; remove read-only attributes")] bool force = false,
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
         try
         {
@@ -867,80 +668,50 @@ public class FileCommands : CommandBase
             {
                 if (force)
                 {
-                    return Serialize(new
-                    {
-                        ok = true,
-                        action = "delete",
-                        path = full,
-                        existed = false,
-                        deleted = false
-                    });
+                    return $"✅ Success: Path did not exist (ignored due to force=true): {full}";
                 }
 
-                return Serialize(new { ok = false, error = "Path not found", path = full });
+                return $"❌ Error: Path not found: {full}\n💡 TIP: Use FindFiles to verify the exact name/path, or set force=true to ignore.";
             }
 
             if (File.Exists(full))
             {
-                try
+                if (force)
                 {
-                    if (force)
+                    try
                     {
                         var attrs = File.GetAttributes(full);
                         if ((attrs & FileAttributes.ReadOnly) != 0)
                             File.SetAttributes(full, attrs & ~FileAttributes.ReadOnly);
                     }
+                    catch { /* ignore */ }
                 }
-                catch { /* ignore */ }
 
                 File.Delete(full);
-
-                return Serialize(new
-                {
-                    ok = true,
-                    action = "delete",
-                    kind = "file",
-                    path = full,
-                    existed = true,
-                    deleted = true
-                });
+                return $"✅ Success: File deleted: {full}";
             }
 
+            // 走到这里说明是目录
             if (!recursive)
             {
-                return Serialize(new
-                {
-                    ok = false,
-                    error = "Target is a directory (use --recursive to delete directories)",
-                    path = full
-                });
+                return $"❌ Error: Target is a directory: {full}\n💡 TIP: You MUST set 'recursive' to true to delete a directory and all its contents.";
             }
 
             Directory.Delete(full, recursive: true);
-
-            return Serialize(new
-            {
-                ok = true,
-                action = "delete",
-                kind = "directory",
-                path = full,
-                existed = true,
-                deleted = true,
-                recursive
-            });
+            return $"✅ Success: Directory recursively deleted: {full}";
         }
         catch (Exception ex)
         {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}" });
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
         }
     }
 
-    [Description("Rename or move a file")]
+    [Description("Rename or move a file. Automatically creates destination parent directories if they don't exist.")]
     public string CommandRenameFile(
-        [Description("Source file path")] string src,
-        [Description("Destination file path")] string dst,
-        [Description("Overwrite destination if it exists")] bool overwrite = false,
-        [Description("Working directory (optional)")] string workingDirectory = "")
+    [Description("Source file path")] string src,
+    [Description("Destination file path")] string dst,
+    [Description("Overwrite destination if it exists")] bool overwrite = false,
+    [Description("Working directory (optional)")] string workingDirectory = "")
     {
         try
         {
@@ -954,24 +725,17 @@ public class FileCommands : CommandBase
             if (!File.Exists(srcFull))
             {
                 if (Directory.Exists(srcFull))
-                    return Serialize(new { ok = false, error = "Source is a directory (file expected)", src = srcFull });
+                    return $"❌ Error: Source is a directory, but file was expected: {srcFull}";
 
-                return Serialize(new { ok = false, error = "Source file not found", src = srcFull });
+                return $"❌ Error: Source file not found: {srcFull}\n💡 TIP: Use FindFiles to verify the source file exists.";
             }
 
             if (string.Equals(srcFull, dstFull, StringComparison.OrdinalIgnoreCase))
             {
-                return Serialize(new
-                {
-                    ok = true,
-                    action = "rename",
-                    src = srcFull,
-                    dst = dstFull,
-                    changed = false,
-                    overwritten = false
-                });
+                return $"✅ Success: Source and destination are the same (no changes made): {srcFull}";
             }
 
+            // 自动创建目标文件夹，防止 LLM 在 move 之前忘记调用 Mkdir 导致报错
             var dstDir = Path.GetDirectoryName(dstFull);
             if (!string.IsNullOrWhiteSpace(dstDir))
                 Directory.CreateDirectory(dstDir);
@@ -979,30 +743,309 @@ public class FileCommands : CommandBase
             var dstExists = File.Exists(dstFull);
             if (dstExists && !overwrite)
             {
-                return Serialize(new
-                {
-                    ok = false,
-                    error = "Destination file already exists (use --overwrite to replace)",
-                    src = srcFull,
-                    dst = dstFull
-                });
+                return $"❌ Error: Destination file already exists: {dstFull}\n💡 TIP: Set 'overwrite' to true if you want to replace it.";
             }
 
             File.Move(srcFull, dstFull, overwrite);
 
-            return Serialize(new
-            {
-                ok = true,
-                action = "rename",
-                src = srcFull,
-                dst = dstFull,
-                overwritten = dstExists && overwrite
-            });
+            var sb = new StringBuilder();
+            sb.AppendLine($"✅ Success: File {(dstExists ? "overwritten" : "moved/renamed")}");
+            sb.AppendLine($"   From: {srcFull}");
+            sb.AppendLine($"   To:   {dstFull}");
+
+            return sb.ToString();
         }
         catch (Exception ex)
         {
-            return Serialize(new { ok = false, error = $"{ex.GetType().Name}: {ex.Message}" });
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
         }
+    }
+
+    [Description("Create a new text file (UTF-8 encoding). Overwrites if file exists (when force=true).")]
+    public string CommandCreateText(
+    [Description("File path to create")] string filePath,
+    [Description("File content to write")] string content = "",
+    [Description("Overwrite if file already exists")] bool force = false,
+    [Description("Working directory (optional)")] string workingDirectory = "")
+    {
+        try
+        {
+            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                ? Environment.CurrentDirectory
+                : workingDirectory!;
+
+            var full = Path.GetFullPath(filePath, baseDir);
+
+            var dir = Path.GetDirectoryName(full);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            bool existed = File.Exists(full);
+            if (existed && !force)
+                return $"❌ Error: File already exists: {full}\n💡 TIP: Use 'force=true' to overwrite, or use 'AppendToFile' to add content.";
+
+            content = content ?? string.Empty;
+            File.WriteAllText(full, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            return $"✅ Success: File {(existed ? "overwritten" : "created")} at {full} ({content.Length} characters written).";
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
+        }
+    }
+
+    [Description("Append text to the end of a file (creates file if it doesn't exist).")]
+    public string AppendToFile(
+        [Description("File path")] string filePath,
+        [Description("Text content to append")] string content,
+        [Description("Working directory (optional)")] string workingDirectory = "")
+    {
+        try
+        {
+            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                ? Environment.CurrentDirectory
+                : workingDirectory!;
+
+            var full = Path.GetFullPath(filePath, baseDir);
+
+            var dir = Path.GetDirectoryName(full);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            File.AppendAllText(full, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            return $"✅ Success: Appended {content.Length} characters to {full}\n💡 TIP: Use CommandCat to verify the updated file content if needed.";
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
+        }
+    }
+
+    [Description("Check if a file or directory exists.")]
+    public string FileExists(
+    [Description("Path to check")] string path,
+    [Description("Working directory (optional)")] string workingDirectory = "")
+    {
+        try
+        {
+            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                ? Environment.CurrentDirectory
+                : workingDirectory!;
+
+            var full = Path.GetFullPath(path, baseDir);
+
+            if (File.Exists(full)) return $"✅ Exists: [File] {full}";
+            if (Directory.Exists(full)) return $"✅ Exists: [Directory] {full}";
+
+            return $"❌ Not Found: Neither file nor directory exists at {full}";
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
+        }
+    }
+
+    [Description("Get detailed file or directory metadata (size, timestamps, attributes).")]
+    public string GetFileInfo(
+        [Description("Path to file or directory")] string path,
+        [Description("Working directory (optional)")] string workingDirectory = "")
+    {
+        try
+        {
+            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                ? Environment.CurrentDirectory
+                : workingDirectory!;
+
+            var full = Path.GetFullPath(path, baseDir);
+            var sb = new StringBuilder();
+
+            if (File.Exists(full))
+            {
+                var fi = new FileInfo(full);
+                sb.AppendLine($"--- File Information ---");
+                sb.AppendLine($"Path: {full}");
+                sb.AppendLine($"Type: File ({fi.Extension})");
+                // 友好的文件大小展示
+                sb.AppendLine($"Size: {fi.Length} bytes ({(fi.Length / 1024.0):F2} KB)");
+                sb.AppendLine($"Created:  {fi.CreationTimeUtc:yyyy-MM-dd HH:mm:ss} UTC");
+                sb.AppendLine($"Modified: {fi.LastWriteTimeUtc:yyyy-MM-dd HH:mm:ss} UTC");
+                sb.AppendLine($"Attributes: {fi.Attributes}");
+                sb.AppendLine($"Read-Only: {fi.IsReadOnly}");
+                return sb.ToString();
+            }
+            else if (Directory.Exists(full))
+            {
+                var di = new DirectoryInfo(full);
+                sb.AppendLine($"--- Directory Information ---");
+                sb.AppendLine($"Path: {full}");
+                sb.AppendLine($"Type: Directory");
+                sb.AppendLine($"Created:  {di.CreationTimeUtc:yyyy-MM-dd HH:mm:ss} UTC");
+                sb.AppendLine($"Modified: {di.LastWriteTimeUtc:yyyy-MM-dd HH:mm:ss} UTC");
+                sb.AppendLine($"Attributes: {di.Attributes}");
+                return sb.ToString();
+            }
+
+            return $"❌ Not Found: {full}";
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
+        }
+    }
+
+    [Description("List directory contents. BEST PRACTICE: Use this to explore project structure. Output is limited to prevent context overflow.")]
+    public string CommandDir(
+    [Description("Path to list (defaults to current directory)")] string path = "",
+    [Description("Working directory (optional)")] string workingDirectory = "",
+    [Description("Recursively list all subdirectories (Warning: use carefully on large directories)")] bool recursive = false)
+    {
+        var display = "dir " + (string.IsNullOrWhiteSpace(path) ? "." : path) + (recursive ? " -r" : "");
+
+        // 目录查询极快，建议 runInBackground 设为 false，确保 LLM 立即拿到结果
+        return RunNative(
+            displayCommand: display,
+            runner: async (ctx, ct) =>
+            {
+                try
+                {
+                    await Task.Yield();
+
+                    var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                        ? Environment.CurrentDirectory
+                        : workingDirectory!;
+
+                    var target = string.IsNullOrWhiteSpace(path) ? "." : path!;
+                    var full = Path.GetFullPath(target, baseDir);
+
+                    if (!Directory.Exists(full))
+                    {
+                        ctx.WriteStderrLine($"❌ Error: Directory not found: {full}");
+                        return 2;
+                    }
+
+                    var root = new DirectoryInfo(full);
+
+                    ctx.WriteStdoutLine($"--- Directory Listing ---");
+                    ctx.WriteStdoutLine($"📁 Path: {root.FullName}");
+                    ctx.WriteStdoutLine($"=========================");
+
+                    // 防爆栈机制：限制最大输出条目数
+                    int maxEntries = 300;
+                    int entryCount = 0;
+                    bool isTruncated = false;
+
+                    // 干扰目录黑名单
+                    string[] ignoredDirs = { ".git", "node_modules", "bin", "obj", ".vs", "dist", "out" };
+
+                    void SortEntries(FileSystemInfo[] entries)
+                    {
+                        Array.Sort(entries, (a, b) =>
+                        {
+                            var ad = a is DirectoryInfo;
+                            var bd = b is DirectoryInfo;
+                            if (ad != bd) return ad ? -1 : 1; // 文件夹排在前面
+                            return StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name);
+                        });
+                    }
+
+                    void Traverse(DirectoryInfo dir, int depth)
+                    {
+                        if (isTruncated) return;
+                        ct.ThrowIfCancellationRequested();
+
+                        FileSystemInfo[] entries;
+                        try
+                        {
+                            entries = dir.GetFileSystemInfos();
+                        }
+                        catch (Exception ex)
+                        {
+                            ctx.WriteStderrLine($"  [Access Denied]: {dir.Name} ({ex.Message})");
+                            return;
+                        }
+
+                        SortEntries(entries);
+
+                        foreach (var e in entries)
+                        {
+                            if (isTruncated) break;
+                            ct.ThrowIfCancellationRequested();
+
+                            string indent = new string(' ', depth * 4);
+                            bool isDir = (e.Attributes & FileAttributes.Directory) != 0;
+
+                            // 递归模式下跳过黑名单目录
+                            if (recursive && isDir && ignoredDirs.Contains(e.Name, StringComparer.OrdinalIgnoreCase))
+                            {
+                                ctx.WriteStdoutLine($"{indent}📁 {e.Name}/ (Ignored)");
+                                entryCount++;
+                                continue;
+                            }
+
+                            if (isDir)
+                            {
+                                ctx.WriteStdoutLine($"{indent}📁 {e.Name}/");
+                                entryCount++;
+
+                                if (recursive)
+                                {
+                                    var isReparsePoint = (e.Attributes & FileAttributes.ReparsePoint) != 0;
+                                    if (!isReparsePoint) // 防止符号链接死循环
+                                    {
+                                        Traverse((DirectoryInfo)e, depth + 1);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // 文件
+                                long size = 0;
+                                try { size = (e as FileInfo)?.Length ?? 0; } catch { }
+                                string sizeStr = size > 1024 * 1024 ? $"{(size / 1048576.0):F1} MB" :
+                                                 size > 1024 ? $"{(size / 1024.0):F1} KB" : $"{size} B";
+
+                                ctx.WriteStdoutLine($"{indent}📄 {e.Name,-30} [{sizeStr}]");
+                                entryCount++;
+                            }
+
+                            if (entryCount >= maxEntries)
+                            {
+                                isTruncated = true;
+                            }
+                        }
+                    }
+
+                    Traverse(root, 0);
+
+                    ctx.WriteStdoutLine($"=========================");
+                    if (isTruncated)
+                    {
+                        ctx.WriteStdoutLine($"⚠️ WARNING: Output truncated at {maxEntries} entries to prevent context overflow.");
+                        ctx.WriteStdoutLine($"💡 TIP: If you need to search for a specific file, use 'FindFiles' instead of exploring manually.");
+                    }
+                    else
+                    {
+                        ctx.WriteStdoutLine($"Total entries: {entryCount}");
+                    }
+
+                    return 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    ctx.WriteStderrLine("Operation canceled.");
+                    return 137;
+                }
+                catch (Exception ex)
+                {
+                    ctx.WriteStderrLine($"❌ Error ({ex.GetType().Name}): {ex.Message}");
+                    return 1;
+                }
+            },
+            runInBackground: false, // 设为 false 等待执行完毕
+            timeoutMs: 30000
+        );
     }
 
     private static List<string> ToLinesFromEscaped(string? textEscaped)

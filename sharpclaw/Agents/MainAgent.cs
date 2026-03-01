@@ -95,7 +95,7 @@ public class MainAgent
 
         var fileToolNames = new HashSet<string>
         {
-            "CommandCat", "CommandCreateText", "AppendToFile",
+            "CommandGetLineCount", "CommandCat", "CommandCreateText", "AppendToFile",
             "FileExists", "CommandDir", "CommandEditText", "SearchInFiles"
         };
         var fileTools = commandSkills.Where(t => fileToolNames.Contains(t.Name)).ToArray();
