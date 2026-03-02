@@ -54,7 +54,7 @@ public class MainAgent
         IChatIO chatIO,
         IAgentContext agentContext)
     {
-        var sharpclawDir = Path.GetDirectoryName(SharpclawConfig.ConfigPath)!;
+        var sharpclawDir = SharpclawConfig.SharpclawDir;
 
         var cacheConfigPath = Path.Combine(sharpclawDir, "cache_config.json");
         SharpclawCacheConfig? cacheConfig = null;

@@ -24,9 +24,11 @@ public class SharpclawConfig
     public MemoryConfig Memory { get; set; } = new();
     public ChannelsConfig Channels { get; set; } = new();
 
-    public static string ConfigPath => Path.Combine(
+    public static string SharpclawDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".sharpclaw", "config.json");
+        ".sharpclaw");
+
+    public static string ConfigPath => Path.Combine(SharpclawDir, "config.json");
 
     public static bool Exists() => File.Exists(ConfigPath);
 
@@ -62,8 +64,9 @@ public class SharpclawConfig
     public void Save()
     {
         Version = CurrentVersion;
-        var dir = Path.GetDirectoryName(ConfigPath)!;
-        Directory.CreateDirectory(dir);
+        var dir = SharpclawDir;
+        if (!Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
 
         EncryptKeys();
         var json = JsonSerializer.Serialize(this, JsonOptions);

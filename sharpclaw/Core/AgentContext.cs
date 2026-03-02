@@ -72,6 +72,6 @@ public class AgentContext : IAgentContext
 
     public string GetSkillsDirPath()
     {
-        return Path.Combine(SharpclawConfig.ConfigPath, "skills");
+        return Path.Combine(SharpclawConfig.SharpclawDir, "skills");
     }
 }
