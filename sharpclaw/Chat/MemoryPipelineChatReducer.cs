@@ -268,44 +268,43 @@ public class MemoryPipelineChatReducer : IChatReducer
         int startLine = 1,
         int endLine = -1)
     {
-        // 1. 生成一个唯一的 CallId，LLM 依赖这个 ID 将结果与调用匹配起来
-        var callId = Guid.NewGuid().ToString().Replace("-", "").Substring(0, 10); // 截取一段即可，如 "a1b2c3d4e5"
+        var callId = Guid.NewGuid().ToString().Replace("-", "").Substring(0, 10);
 
-        // 2. 构造【Assistant】发起工具调用的假消息
-        var assistantMessage = new ChatMessage();
-        assistantMessage.Contents.Add(new FunctionCallContent(
-            callId: callId,
-            name: "CommandCat",
-            arguments: new Dictionary<string, object?>
+        var assistantMessage = new ChatMessage(ChatRole.Assistant, [
+            new TextContent($"正在读取文件 {Path.GetFileName(filePath)} 的内容...（行 {startLine} 到 {endLine}）"),
+            new FunctionCallContent(
+                callId: callId,
+                name: "CommandCat",
+                arguments: new Dictionary<string, object?>
+                {
+                    { "filePath", filePath },
+                    { "startLine", startLine },
+                    { "endLine", endLine }
+                }
+            )
+        ])
+        {
+            AdditionalProperties = new()
             {
-                { "filePath", filePath },
-                { "startLine", startLine },
-                { "endLine", endLine }
+                { messageKey, true }
             }
-        ));
-
-        // 标记为自动注入，方便后续 Reducer 清理（复用你现有的 Key）
-        assistantMessage.AdditionalProperties = new()
+        };
+        var toolMessage = new ChatMessage(ChatRole.Tool, [
+            new FunctionResultContent(
+                    callId: callId,
+                    result: $"--- File: {Path.GetFileName(filePath)} (Reading from line {startLine}) ---\n" +
+                            $"{fileContent}\n" +
+                            $"--- End of Read ---"
+                )
+            ])
         {
-            { messageKey, true }
+            AdditionalProperties = new()
+            {
+                { messageKey, true }
+            }
         };
 
-        // 3. 构造【Tool】返回执行结果的假消息
-        var toolMessage = new ChatMessage();
-        toolMessage.Contents.Add(new FunctionResultContent(
-            callId: callId,
-            result: $"--- File: {Path.GetFileName(filePath)} (Reading from line {startLine}) ---\n" +
-                    $"{fileContent}\n" +
-                    $"--- End of Read ---"
-        ));
-
-        // 同样标记为自动注入
-        toolMessage.AdditionalProperties = new()
-        {
-            { messageKey, true }
-        };
-
-        // 4. 必须按顺序添加到对话列表中：先 Call，再 Result
+        messages.Add(new ChatMessage(ChatRole.User, "查询最近记忆"));
         messages.Add(assistantMessage);
         messages.Add(toolMessage);
     }
