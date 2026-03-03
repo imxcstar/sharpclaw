@@ -12,6 +12,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<PackageReference Include="AgentSkillsDotNet" Version="1.0.0-rc2" />
 		<PackageReference Include="Anthropic" Version="12.5.0" />
 		<PackageReference Include="Cronos" Version="0.11.1" />
 		<PackageReference Include="GeminiDotnet.Extensions.AI" Version="0.22.0" />

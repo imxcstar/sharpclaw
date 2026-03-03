@@ -131,11 +131,6 @@ public class MainAgent
             archiver: archiver,
             memorySaver: memorySaver);
 
-
-#pragma warning disable MAAI001 // 类型仅用于评估，在将来的更新中可能会被更改或删除。取消此诊断以继续。
-        var skillsProvider = new FileAgentSkillsProvider(skillPath: _agentContext.GetSkillsDirPath());
-#pragma warning restore MAAI001 // 类型仅用于评估，在将来的更新中可能会被更改或删除。取消此诊断以继续。
-
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
             .UseChatReducer(_reducer)
@@ -145,8 +140,7 @@ public class MainAgent
                 {
                     Instructions = systemPrompt,
                     Tools = tools
-                },
-                AIContextProviders = [skillsProvider]
+                }
             });
     }
 

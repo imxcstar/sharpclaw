@@ -110,7 +110,8 @@ public class MemoryPipelineChatReducer : IChatReducer
         ArchiveResult? archiveResult = null;
 
         List<ChatMessage> allMessages = [.. OldWorkingMemoryContent, .. conversationMessages];
-        if (allMessages.Sum(x => x.Contents.Count()) > _resetThreshold)
+        var messageText = ConvertMessagesToText(allMessages).Replace(" ", "");
+        if (messageText.Length > 200000)
         {
             // 进入裁剪，清空累积的工作记忆
             OldWorkingMemoryContent.Clear();
@@ -181,6 +182,44 @@ public class MemoryPipelineChatReducer : IChatReducer
         return result;
     }
 
+    private string ConvertMessagesToText(IEnumerable<ChatMessage> messages)
+    {
+        var sb = new StringBuilder();
+        foreach (var msg in messages)
+        {
+            if (msg.Role == ChatRole.User)
+            {
+                var text = string.Join("", msg.Contents.OfType<TextContent>()
+                    .Where(t => !string.IsNullOrWhiteSpace(t.Text))
+                    .Select(t => t.Text.Trim()));
+                if (!string.IsNullOrWhiteSpace(text))
+                    sb.Append($"### 用户\n\n{text}\n\n");
+                continue;
+            }
+
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
+                        sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
+                        break;
+                    case FunctionCallContent call:
+                        var args = call.Arguments is not null
+                            ? JsonSerializer.Serialize(call.Arguments)
+                            : "";
+                        sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
+                        break;
+                    case FunctionResultContent result:
+                        var resultText = result.Result?.ToString() ?? "";
+                        sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
+                        break;
+                }
+            }
+        }
+        return sb.ToString();
+    }
+
     private async Task SaveHistoryFileAsync(
         IReadOnlyList<ChatMessage> messages,
         CancellationToken cancellationToken)
@@ -196,39 +235,7 @@ public class MemoryPipelineChatReducer : IChatReducer
 
             var sb = new StringBuilder();
             sb.Append($"# 对话历史 {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n\n");
-
-            foreach (var msg in messages)
-            {
-                if (msg.Role == ChatRole.User)
-                {
-                    var text = string.Join("", msg.Contents.OfType<TextContent>()
-                        .Where(t => !string.IsNullOrWhiteSpace(t.Text))
-                        .Select(t => t.Text.Trim()));
-                    if (!string.IsNullOrWhiteSpace(text))
-                        sb.Append($"### 用户\n\n{text}\n\n");
-                    continue;
-                }
-
-                foreach (var content in msg.Contents)
-                {
-                    switch (content)
-                    {
-                        case TextContent text when !string.IsNullOrWhiteSpace(text.Text):
-                            sb.Append($"### 助手\n\n{text.Text.Trim()}\n\n");
-                            break;
-                        case FunctionCallContent call:
-                            var args = call.Arguments is not null
-                                ? JsonSerializer.Serialize(call.Arguments)
-                                : "";
-                            sb.Append($"#### 工具调用: {call.Name}\n\n参数: `{args}`\n\n");
-                            break;
-                        case FunctionResultContent result:
-                            var resultText = result.Result?.ToString() ?? "";
-                            sb.Append($"<details>\n<summary>执行结果</summary>\n\n```\n{resultText}\n```\n\n</details>\n\n");
-                            break;
-                    }
-                }
-            }
+            sb.Append(ConvertMessagesToText(messages));
 
             await File.WriteAllTextAsync(filePath, sb.ToString(), cancellationToken);
             AppLogger.Log($"[Archive] 已保存历史文件: {fileName}（{messages.Count} 条消息）");
