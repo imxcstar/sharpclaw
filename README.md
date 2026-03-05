@@ -29,6 +29,12 @@ By leveraging the `Microsoft.Extensions.AI` abstraction layer, Sharpclaw seamles
 * **Web (WebSocket):** A lightweight ASP.NET Core web server with a modern UI (Tokyo Night theme) and real-time streaming.
 * **QQ Bot:** Native integration with QQ channels, groups, and private messages.
 
+### 🔌 Extensible Skills System
+
+* **External Skills:** Load custom skills from `~/.sharpclaw/skills/` via `AgentSkillsDotNet`, seamlessly merged with built-in commands as a unified tool collection.
+* **Lua Scripting:** Embedded scripting support via `ToonSharp` for user-defined automation.
+* **Scheduled Tasks:** Cron expression support via `Cronos` for timed operations.
+
 ### 🔒 Secure Configuration
 
 * Cross-platform secure credential storage (Windows Credential Manager, macOS Keychain, Linux libsecret) using AES-256-CBC encryption for API keys.
@@ -41,7 +47,7 @@ By leveraging the `Microsoft.Extensions.AI` abstraction layer, Sharpclaw seamles
 
 ### Prerequisites
 
-* [.NET 10.0 SDK (Preview)](https://dotnet.microsoft.com/)
+* [.NET 10.0 SDK](https://dotnet.microsoft.com/)
 * Git (for cloning submodules)
 
 ### Build and Run
@@ -107,15 +113,13 @@ dotnet run --project sharpclaw config
 │  ├── VectorMemoryStore — Sharc + SQLite vector search       │
 │  └── InMemoryMemoryStore — Keyword-based fallback           │
 ├─────────────────────────────────────────────────────────────┤
-│  Command System (Commands/)                                  │
-│  ├── FileCommands — File operations (cat, edit, find, etc.) │
-│  ├── ProcessCommands — Bash/PowerShell execution            │
-│  ├── HttpCommands — HTTP requests                           │
-│  ├── TaskCommands — Background task management              │
-│  └── SystemCommands — System info, exit                     │
+│  Skills & Commands (Commands/, ~/.sharpclaw/skills/)         │
+│  ├── Built-in — File, Process, HTTP, Task, System commands  │
+│  ├── External Skills — AgentSkillsDotNet plugin loading     │
+│  └── Memory Tools — SearchMemory, GetRecentMemories         │
 ├─────────────────────────────────────────────────────────────┤
 │  Core Infrastructure (Core/)                                 │
-│  ├── AgentBootstrap — Shared initialization                 │
+│  ├── AgentBootstrap — Shared initialization + skill loading │
 │  ├── SharpclawConfig — Configuration with encryption        │
 │  ├── ClientFactory — LLM client creation                    │
 │  ├── DataProtector/KeyStore — AES-256-CBC encryption        │
@@ -129,7 +133,7 @@ Sharpclaw implements a sophisticated three-layer memory pipeline:
 
 | Layer | File | Purpose |
 |-------|------|---------|
-| **Working Memory** | `working_memory.md` | Current conversation snapshot |
+| **Working Memory** | `working_memory.json` | Current conversation snapshot |
 | **Recent Memory** | `recent_memory.md` | Detailed summaries (append-only) |
 | **Primary Memory** | `primary_memory.md` | Consolidated core facts |
 | **Vector Store** | `memories.db` | Semantic embeddings + metadata |
@@ -195,6 +199,7 @@ Configuration is stored in `~/.sharpclaw/config.json` (version 8):
   },
   "agents": {
     "main": { "enabled": true },
+    "recaller": { "enabled": true },
     "saver": { "enabled": true },
     "summarizer": { "enabled": true }
   },

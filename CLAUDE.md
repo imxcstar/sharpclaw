@@ -1,4 +1,4 @@
-# CLAUDE.md — Sharpclaw Project Instructions
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -91,7 +91,7 @@ Sharpclaw implements a sophisticated three-layer memory pipeline:
 
 | Layer | File | Purpose | Written By |
 |-------|------|---------|------------|
-| **Working Memory** | `working_memory.md` | Current conversation snapshot | MainAgent (each turn) |
+| **Working Memory** | `working_memory.json` | Current conversation snapshot (JSON) | MainAgent (each turn) |
 | **Recent Memory** | `recent_memory.md` | Detailed summaries (append-only) | ConversationArchiver (Summarizer) |
 | **Primary Memory** | `primary_memory.md` | Consolidated core facts | ConversationArchiver (Consolidator) |
 | **Vector Store** | `memories.db` | Semantic embeddings + metadata | VectorMemoryStore |
@@ -102,6 +102,15 @@ Sharpclaw implements a sophisticated three-layer memory pipeline:
 2. When context window overflows → Summarizer generates detailed summary → appends to recent memory
 3. When recent memory > 30k chars → Consolidator extracts core info → overwrites primary memory
 
+**Memory Injection Mechanism:**
+- Injected messages are identified via `AdditionalProperties` dictionary keys:
+  - `AutoMemoryKey` (`__auto_memories__`) — Vector search results
+  - `AutoRecentMemoryKey` (`__auto_recent_memory__`) — Recent memory content
+  - `AutoPrimaryMemoryKey` (`__auto_primary_memory__`) — Primary memory content
+  - `AutoWorkingMemoryKey` (`__auto_working_memory__`) — Working memory snapshot
+- Memory messages are replaced/updated each turn rather than accumulated
+- Turn-based message tracking via `turnStartIndex` separates current turn from full history
+
 ### IChatIO Abstraction
 
 The AI engine is decoupled from frontend through `Abstractions/IChatIO.cs`:
@@ -110,6 +119,14 @@ The AI engine is decoupled from frontend through `Abstractions/IChatIO.cs`:
 - `Channels/QQBot/QQBotServer.cs` — QQ Bot interface
 
 All frontends share the same `MainAgent` logic.
+
+### Skills System
+
+External skills are loaded from `~/.sharpclaw/skills/` via `AgentSkillsDotNet`:
+- `AgentBootstrap` scans the skills directory at startup and converts discovered skills into `AITool[]`
+- Skills are merged with built-in command tools into a unified `CommandSkills` array
+- All tools (built-in commands + external skills) are passed to `MainAgent` as a single collection
+- The skills directory is auto-created if it doesn't exist
 
 ---
 
@@ -144,6 +161,9 @@ Configuration stored in `~/.sharpclaw/config.json` (version 8):
 ### Sharpclaw
 - `Microsoft.Agents.AI.OpenAI` / `Microsoft.Extensions.AI.OpenAI` — AI agent framework
 - `Anthropic` / `GeminiDotnet.Extensions.AI` — Multi-provider LLM support
+- `AgentSkillsDotNet` — External skills loading and tool generation
+- `ToonSharp` — Lua scripting support
+- `Cronos` — Cron expression scheduling
 - `Terminal.Gui` v2 (develop) — TUI framework
 - `Luolan.QQBot` — QQ Bot SDK
 - `Microsoft.Data.Sqlite` — SQLite for vector store
@@ -202,15 +222,16 @@ sharpclaw/
 - All sub-agents use **tool calling** (not text parsing) for structured output
 - Sub-agents access memory files via standard file command tools with prompt-level write restrictions
 - Injected messages use `AdditionalProperties` dictionary keys for identification
-- Session persistence via `working_memory.md`, `memories.db`, tiered memory files
+- Session persistence via `working_memory.json`, `memories.db`, tiered memory files
 
 ### Agent Behavior (From MainAgent System Prompt)
 1. **Context-Aware Execution**: Use `CommandDir`/`FindFiles` when unfamiliar with project; skip if memory sufficient
 2. **Read Before Write**: Always `CommandCat` before `CommandEditText` to get exact line numbers
 3. **Evaluate Impact**: Use `SearchInFiles` before modifying public APIs
-4. **Goal Decomposition**: Break complex tasks into subtasks, execute continuously
-5. **Auto-Recovery**: On failure, analyze stderr, retry 2-3 times before reporting
-6. **Strict Verification**: Check Git Diff after edits, fix immediately if wrong
+4. **Skill Introspection**: Check available tools/skills before claiming capabilities; never fabricate unauthorized operations
+5. **Goal Decomposition**: Break complex tasks into subtasks, execute continuously
+6. **Auto-Recovery**: On failure, analyze stderr, retry 2-3 times before reporting
+7. **Strict Verification**: Check Git Diff after edits, fix immediately if wrong
 
 ---
 

@@ -95,6 +95,13 @@ public class MemoryPipelineChatReducer : IChatReducer
         if (_systemPrompt is not null && systemMessages.Count == 0)
             systemMessages.Add(new ChatMessage(ChatRole.System, _systemPrompt));
 
+        // 注入当前时间
+        systemMessages.Add(new ChatMessage(ChatRole.System,
+            $"[当前时间] {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}")
+        {
+            AdditionalProperties = new() { [AutoMemoryKey] = true }
+        });
+
         // ── 2. 保存工作记忆（从 MainAgent 流式累积的 WorkingMemoryBuffer）──
         SaveWorkingMemory();
 

@@ -222,6 +222,7 @@ public class MainAgent
         // 流式输出
         _reducer.UserInput = input;
         _reducer.WorkingMemoryBuffer.Add(new ChatMessage(ChatRole.User, input));
+        var turnStartIndex = _reducer.WorkingMemoryBuffer.Count; // 当前轮次流式消息的起始索引
         AIContent? lastContent = null;
         AppLogger.SetStatus("AI 思考中...");
         _chatIO.BeginAiResponse();
@@ -294,14 +295,16 @@ public class MainAgent
         if (message.Contents.Count > 0)
             _reducer.WorkingMemoryBuffer.Add(message);
 
-        // 检查所有未返回结果的工具调用，补充取消标记
-        var allCallIds = _reducer.WorkingMemoryBuffer
+        // 检查当前轮次中未返回结果的工具调用，补充取消标记
+        var turnMessages = _reducer.WorkingMemoryBuffer.Skip(turnStartIndex);
+
+        var allCallIds = turnMessages
             .Where(m => m.Role == ChatRole.Assistant)
             .SelectMany(m => m.Contents.OfType<FunctionCallContent>())
             .Select(c => c.CallId)
             .ToHashSet();
 
-        var answeredCallIds = _reducer.WorkingMemoryBuffer
+        var answeredCallIds = turnMessages
             .Where(m => m.Role == ChatRole.Tool)
             .SelectMany(m => m.Contents.OfType<FunctionResultContent>())
             .Select(r => r.CallId)
@@ -310,7 +313,7 @@ public class MainAgent
         allCallIds.ExceptWith(answeredCallIds);
         if (allCallIds.Count > 0)
         {
-            var unmatchedCalls = _reducer.WorkingMemoryBuffer
+            var unmatchedCalls = turnMessages
                 .Where(m => m.Role == ChatRole.Assistant)
                 .SelectMany(m => m.Contents.OfType<FunctionCallContent>())
                 .Where(c => allCallIds.Contains(c.CallId))
