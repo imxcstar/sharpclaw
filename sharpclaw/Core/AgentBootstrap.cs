@@ -37,17 +37,19 @@ public static class AgentBootstrap
 
             fileCommands.CommandDir,
             fileCommands.CommandGetLineCount,
-            fileCommands.CommandCat,
             fileCommands.FileExists,
             fileCommands.GetFileInfo,
-            fileCommands.FindFiles,
-            fileCommands.SearchInFiles,
-            fileCommands.CommandCreateText,
             fileCommands.AppendToFile,
-            fileCommands.CommandEditText,
             fileCommands.CommandRenameFile,
             fileCommands.CommandMkdir,
             fileCommands.CommandDelete,
+
+            // Claude Code 风格工具
+            fileCommands.EditByMatch,
+            fileCommands.Grep,
+            fileCommands.GlobFiles,
+            fileCommands.WriteFile,
+            fileCommands.ReadFile,
 
             httpCommands.CommandHttp,
 

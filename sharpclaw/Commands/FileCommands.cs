@@ -1081,4 +1081,691 @@ public class FileCommands : CommandBase
             timeoutMs: 30000
         );
     }
+
+    // =========================================================================
+    // 以下为基于 Claude Code 工具范式实现的新命令
+    // =========================================================================
+
+    [Description("通过精确文本匹配来编辑文件。提供要替换的原始文本(oldString)和新文本(newString)。" +
+        "比行号编辑更可靠，因为不需要计算行号。" +
+        "重要：oldString 必须与文件中的内容完全匹配（包括空白和缩进）。" +
+        "如果 oldString 在文件中不唯一，需要提供更长的上下文使其唯一，或使用 replaceAll=true 替换所有匹配。")]
+    public string EditByMatch(
+        [Description("要编辑的文件路径")] string filePath,
+        [Description("要查找并替换的原始文本（必须与文件内容完全匹配，包括缩进和空白）")] string oldString,
+        [Description("替换后的新文本（必须与 oldString 不同）")] string newString,
+        [Description("是否替换所有匹配项（默认 false，仅替换第一个匹配；如果存在多个匹配且为 false 则报错）")] bool replaceAll = false,
+        [Description("工作目录（可选）")] string workingDirectory = "")
+    {
+        try
+        {
+            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                ? GetDefaultWorkspace()
+                : workingDirectory!;
+
+            var full = Path.GetFullPath(filePath, baseDir);
+
+            if (!File.Exists(full))
+                return $"❌ Error: File not found: {full}\n💡 TIP: Use ReadFile or GlobFiles to verify the file path.";
+
+            if (string.IsNullOrEmpty(oldString))
+                return "❌ Error: oldString cannot be empty. Provide the exact text to find and replace.";
+
+            if (oldString == newString)
+                return "❌ Error: oldString and newString are identical. No changes needed.";
+
+            // 读取文件，保留原始编码
+            string originalContent;
+            Encoding encoding;
+            using (var fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+            {
+                originalContent = sr.ReadToEnd();
+                encoding = sr.CurrentEncoding;
+            }
+
+            // 检测文件的原始换行符风格
+            string lineEnding = originalContent.Contains("\r\n") ? "\r\n" : "\n";
+
+            // 将文件内容和 oldString/newString 归一化为 \n 进行匹配
+            string normalizedContent = originalContent.Replace("\r\n", "\n").Replace("\r", "\n");
+            string normalizedOld = oldString.Replace("\r\n", "\n").Replace("\r", "\n");
+            string normalizedNew = newString.Replace("\r\n", "\n").Replace("\r", "\n");
+
+            // 计算匹配次数
+            int matchCount = 0;
+            int searchStart = 0;
+            var matchPositions = new List<int>();
+            while (true)
+            {
+                int pos = normalizedContent.IndexOf(normalizedOld, searchStart, StringComparison.Ordinal);
+                if (pos < 0) break;
+                matchPositions.Add(pos);
+                matchCount++;
+                searchStart = pos + normalizedOld.Length;
+            }
+
+            if (matchCount == 0)
+                return $"❌ Error: oldString not found in file.\nThe provided text does not match any content in {Path.GetFileName(full)}.\n💡 TIP: Use ReadFile to re-read the file and copy the exact text (including whitespace and indentation).";
+
+            if (matchCount > 1 && !replaceAll)
+                return $"❌ Error: Found {matchCount} matches for oldString. Either:\n  1. Set replaceAll=true to replace all occurrences, or\n  2. Provide a longer/more specific oldString that matches uniquely.";
+
+            // 执行替换
+            string newContent;
+            int replacedCount;
+            if (replaceAll)
+            {
+                newContent = normalizedContent.Replace(normalizedOld, normalizedNew, StringComparison.Ordinal);
+                replacedCount = matchCount;
+            }
+            else
+            {
+                int firstPos = matchPositions[0];
+                newContent = string.Concat(
+                    normalizedContent.AsSpan(0, firstPos),
+                    normalizedNew,
+                    normalizedContent.AsSpan(firstPos + normalizedOld.Length));
+                replacedCount = 1;
+            }
+
+            // 还原到文件的原始换行符风格
+            if (lineEnding == "\r\n")
+                newContent = newContent.Replace("\n", "\r\n");
+
+            // 原子写入
+            var tmp = full + ".tmp." + Guid.NewGuid().ToString("N");
+            File.WriteAllText(tmp, newContent, encoding);
+            File.Move(tmp, full, overwrite: true);
+
+            // 生成 diff 预览
+            var sb = new StringBuilder();
+            sb.AppendLine($"✅ --- Edit Successful ---");
+            sb.AppendLine($"File: {full}");
+            sb.AppendLine($"Matches replaced: {replacedCount}");
+
+            // 为每个替换位置生成 diff hunk（最多展示 3 个）
+            var originalLines = normalizedContent.Split('\n');
+            var newLines = newContent.Replace("\r\n", "\n").Split('\n');
+            var oldStringLines = normalizedOld.Split('\n');
+            var newStringLines = normalizedNew.Split('\n');
+
+            sb.AppendLine("\n[Diff Preview]:");
+            sb.AppendLine("```diff");
+            sb.AppendLine($"--- a/{Path.GetFileName(full)}");
+            sb.AppendLine($"+++ b/{Path.GetFileName(full)}");
+
+            int hunksToShow = Math.Min(replacedCount, 3);
+            for (int h = 0; h < hunksToShow; h++)
+            {
+                if (h > 0) sb.AppendLine("...");
+
+                // 计算匹配起始行号
+                int charsBefore = matchPositions[h];
+                int matchStartLine = normalizedContent.AsSpan(0, charsBefore).Count('\n');
+
+                int contextSize = 3;
+                int ctxStart = Math.Max(0, matchStartLine - contextSize);
+                int ctxEndOld = Math.Min(originalLines.Length - 1, matchStartLine + oldStringLines.Length - 1 + contextSize);
+
+                // 上下文行（修改前）
+                for (int i = ctxStart; i < matchStartLine; i++)
+                    sb.AppendLine($"   {i + 1,4} | {originalLines[i]}");
+
+                // 被删除的行
+                for (int i = 0; i < oldStringLines.Length; i++)
+                    sb.AppendLine($"-  {matchStartLine + i + 1,4} | {oldStringLines[i]}");
+
+                // 新增的行
+                for (int i = 0; i < newStringLines.Length; i++)
+                    sb.AppendLine($"+  {matchStartLine + i + 1,4} | {newStringLines[i]}");
+
+                // 下方上下文行
+                int afterStart = matchStartLine + oldStringLines.Length;
+                int afterEnd = Math.Min(originalLines.Length, afterStart + contextSize);
+                for (int i = afterStart; i < afterEnd; i++)
+                    sb.AppendLine($"   {i + 1,4} | {originalLines[i]}");
+            }
+
+            if (replacedCount > 3)
+                sb.AppendLine($"... ({replacedCount - 3} more replacements not shown)");
+
+            sb.AppendLine("```");
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
+        }
+    }
+
+    [Description("高级内容搜索工具（类似 ripgrep）。支持正则表达式、上下文行显示、多种输出模式和文件类型过滤。" +
+        "输出模式：'content' 显示匹配行内容（支持上下文行），'files_with_matches' 仅显示文件路径（默认），'count' 显示匹配计数。")]
+    public string Grep(
+        [Description("搜索的正则表达式模式")] string pattern,
+        [Description("搜索路径（文件或目录，默认为工作目录）")] string path = "",
+        [Description("Glob 过滤器，限定搜索的文件（例如 '*.cs', '*.{ts,tsx}'）")] string glob = "",
+        [Description("按文件类型过滤（例如 'cs', 'js', 'py', 'java', 'go', 'rust', 'ts', 'xml', 'json', 'md', 'html', 'css', 'sql'）")] string type = "",
+        [Description("输出模式：'content'（显示匹配行）, 'files_with_matches'（仅文件路径，默认）, 'count'（匹配计数）")] string outputMode = "files_with_matches",
+        [Description("匹配行之后显示的上下文行数")] int afterContext = 0,
+        [Description("匹配行之前显示的上下文行数")] int beforeContext = 0,
+        [Description("匹配行前后显示的上下文行数（同时设置 before 和 after）")] int context = 0,
+        [Description("显示行号（仅 content 模式有效，默认 true）")] bool showLineNumbers = true,
+        [Description("大小写不敏感搜索")] bool ignoreCase = false,
+        [Description("限制输出的最大条目数（0 表示不限制）")] int headLimit = 0,
+        [Description("跳过前 N 个条目（用于分页）")] int offset = 0,
+        [Description("多行模式（. 匹配换行符，模式可跨行匹配）")] bool multiline = false,
+        [Description("工作目录（可选）")] string workingDirectory = "")
+    {
+        return RunNative(
+            displayCommand: $"grep '{pattern}'",
+            runner: async (ctx, ct) =>
+            {
+                try
+                {
+                    await Task.Yield();
+
+                    var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                        ? GetDefaultWorkspace()
+                        : workingDirectory!;
+
+                    var searchPath = string.IsNullOrWhiteSpace(path)
+                        ? baseDir
+                        : Path.GetFullPath(path, baseDir);
+
+                    // 解析上下文参数
+                    int effectiveBefore = context > 0 ? context : beforeContext;
+                    int effectiveAfter = context > 0 ? context : afterContext;
+
+                    // 编译正则
+                    var regexOptions = RegexOptions.Compiled;
+                    if (ignoreCase) regexOptions |= RegexOptions.IgnoreCase;
+                    if (multiline) regexOptions |= RegexOptions.Singleline; // . matches \n
+
+                    Regex regex;
+                    try { regex = new Regex(pattern, regexOptions); }
+                    catch (RegexParseException ex)
+                    {
+                        ctx.WriteStderrLine($"❌ Error: Invalid regex pattern: {ex.Message}");
+                        return 1;
+                    }
+
+                    // 类型到 glob 映射
+                    var typeExtMap = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["cs"] = ["*.cs"],
+                        ["js"] = ["*.js", "*.mjs", "*.cjs"],
+                        ["ts"] = ["*.ts", "*.tsx"],
+                        ["py"] = ["*.py"],
+                        ["java"] = ["*.java"],
+                        ["go"] = ["*.go"],
+                        ["rust"] = ["*.rs"],
+                        ["xml"] = ["*.xml"],
+                        ["json"] = ["*.json"],
+                        ["md"] = ["*.md"],
+                        ["html"] = ["*.html", "*.htm"],
+                        ["css"] = ["*.css", "*.scss", "*.less"],
+                        ["sql"] = ["*.sql"],
+                        ["yaml"] = ["*.yaml", "*.yml"],
+                        ["toml"] = ["*.toml"],
+                        ["sh"] = ["*.sh", "*.bash"],
+                    };
+
+                    // 确定搜索文件列表
+                    var filesToSearch = new List<string>();
+
+                    if (File.Exists(searchPath))
+                    {
+                        // 单文件搜索
+                        filesToSearch.Add(searchPath);
+                    }
+                    else if (Directory.Exists(searchPath))
+                    {
+                        // 确定文件过滤模式
+                        var patterns = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(type) && typeExtMap.TryGetValue(type.Trim(), out var exts))
+                            patterns.AddRange(exts);
+                        else if (!string.IsNullOrWhiteSpace(glob))
+                            patterns.Add(glob);
+                        else
+                            patterns.Add("*");
+
+                        string[] ignoredDirs = [
+                            $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}",
+                            $"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}",
+                            $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                            $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                            $"{Path.DirectorySeparatorChar}.vs{Path.DirectorySeparatorChar}"
+                        ];
+
+                        var enumOpts = new EnumerationOptions
+                        {
+                            IgnoreInaccessible = true,
+                            RecurseSubdirectories = true,
+                            MatchCasing = MatchCasing.PlatformDefault
+                        };
+
+                        foreach (var p in patterns)
+                        {
+                            try
+                            {
+                                foreach (var f in Directory.EnumerateFiles(searchPath, p, enumOpts))
+                                {
+                                    ct.ThrowIfCancellationRequested();
+                                    if (ignoredDirs.Any(d => f.Contains(d, StringComparison.OrdinalIgnoreCase)))
+                                        continue;
+                                    filesToSearch.Add(f);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                ctx.WriteStderrLine($"Warning: {ex.Message}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ctx.WriteStderrLine($"❌ Error: Path not found: {searchPath}");
+                        return 2;
+                    }
+
+                    var mode = (outputMode ?? "files_with_matches").Trim().ToLowerInvariant();
+                    var sb = new StringBuilder();
+                    int entryCount = 0;
+                    int skipped = 0;
+
+                    if (mode == "files_with_matches")
+                    {
+                        foreach (var file in filesToSearch)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            try
+                            {
+                                bool hasMatch;
+                                if (multiline)
+                                {
+                                    var content = await File.ReadAllTextAsync(file, ct);
+                                    hasMatch = regex.IsMatch(content);
+                                }
+                                else
+                                {
+                                    hasMatch = false;
+                                    foreach (var line in File.ReadLines(file))
+                                    {
+                                        if (regex.IsMatch(line)) { hasMatch = true; break; }
+                                    }
+                                }
+
+                                if (hasMatch)
+                                {
+                                    if (skipped < offset) { skipped++; continue; }
+                                    sb.AppendLine(file);
+                                    entryCount++;
+                                    if (headLimit > 0 && entryCount >= headLimit) break;
+                                }
+                            }
+                            catch { /* skip unreadable files */ }
+                        }
+                    }
+                    else if (mode == "count")
+                    {
+                        foreach (var file in filesToSearch)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            try
+                            {
+                                int count = 0;
+                                if (multiline)
+                                {
+                                    var content = await File.ReadAllTextAsync(file, ct);
+                                    count = regex.Matches(content).Count;
+                                }
+                                else
+                                {
+                                    foreach (var line in File.ReadLines(file))
+                                        if (regex.IsMatch(line)) count++;
+                                }
+
+                                if (count > 0)
+                                {
+                                    if (skipped < offset) { skipped++; continue; }
+                                    sb.AppendLine($"{file}:{count}");
+                                    entryCount++;
+                                    if (headLimit > 0 && entryCount >= headLimit) break;
+                                }
+                            }
+                            catch { /* skip */ }
+                        }
+                    }
+                    else // content mode
+                    {
+                        foreach (var file in filesToSearch)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            try
+                            {
+                                var allLines = File.ReadAllLines(file);
+                                var matchLineNums = new List<int>(); // 0-based
+
+                                for (int i = 0; i < allLines.Length; i++)
+                                    if (regex.IsMatch(allLines[i]))
+                                        matchLineNums.Add(i);
+
+                                if (matchLineNums.Count == 0) continue;
+
+                                if (skipped < offset) { skipped++; continue; }
+
+                                // 合并上下文区间
+                                var ranges = new List<(int Start, int End)>();
+                                foreach (var m in matchLineNums)
+                                {
+                                    int s = Math.Max(0, m - effectiveBefore);
+                                    int e = Math.Min(allLines.Length - 1, m + effectiveAfter);
+                                    if (ranges.Count > 0 && s <= ranges[^1].End + 1)
+                                        ranges[^1] = (ranges[^1].Start, Math.Max(ranges[^1].End, e));
+                                    else
+                                        ranges.Add((s, e));
+                                }
+
+                                var matchSet = new HashSet<int>(matchLineNums);
+
+                                sb.AppendLine($"\n📄 {file}");
+                                for (int r = 0; r < ranges.Count; r++)
+                                {
+                                    if (r > 0) sb.AppendLine("--");
+                                    var (start, end) = ranges[r];
+                                    for (int i = start; i <= end; i++)
+                                    {
+                                        string prefix = matchSet.Contains(i) ? ">" : " ";
+                                        if (showLineNumbers)
+                                            sb.AppendLine($"{prefix} {i + 1,4} | {allLines[i]}");
+                                        else
+                                            sb.AppendLine($"{prefix} {allLines[i]}");
+                                    }
+                                }
+
+                                entryCount++;
+                                if (headLimit > 0 && entryCount >= headLimit) break;
+                            }
+                            catch { /* skip */ }
+                        }
+                    }
+
+                    ctx.WriteStdoutLine(sb.ToString());
+                    return 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    ctx.WriteStderrLine("Operation canceled.");
+                    return 137;
+                }
+                catch (Exception ex)
+                {
+                    ctx.WriteStderrLine($"❌ Error ({ex.GetType().Name}): {ex.Message}");
+                    return 1;
+                }
+            },
+            runInBackground: false,
+            timeoutMs: 60000
+        );
+    }
+
+    [Description("快速文件模式匹配工具。支持 glob 模式（如 '**/*.cs'、'src/**/*.ts'）。" +
+        "结果按修改时间排序（最近修改的排在前面），适合快速定位最近编辑过的文件。")]
+    public string GlobFiles(
+        [Description("Glob 模式（例如 '**/*.cs', 'src/**/*.ts', '*.json'）")] string pattern,
+        [Description("搜索目录（默认为工作目录）")] string path = "",
+        [Description("工作目录（可选）")] string workingDirectory = "")
+    {
+        return RunNative(
+            displayCommand: $"glob '{pattern}'",
+            runner: async (ctx, ct) =>
+            {
+                try
+                {
+                    await Task.Yield();
+
+                    var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                        ? GetDefaultWorkspace()
+                        : workingDirectory!;
+
+                    var searchDir = string.IsNullOrWhiteSpace(path)
+                        ? baseDir
+                        : Path.GetFullPath(path, baseDir);
+
+                    // 解析 glob 模式：处理 ** 和目录前缀
+                    // 例如 "src/**/*.ts" → searchDir=src, filePattern=*.ts, recursive=true
+                    // 例如 "**/*.cs" → searchDir=., filePattern=*.cs, recursive=true
+                    // 例如 "*.json" → searchDir=., filePattern=*.json, recursive=false
+                    string filePattern;
+                    bool recursive;
+
+                    if (pattern.Contains("**"))
+                    {
+                        recursive = true;
+                        // 分割 ** 前后的部分
+                        int starStarIdx = pattern.IndexOf("**", StringComparison.Ordinal);
+                        string prefix = pattern[..starStarIdx].TrimEnd('/', '\\');
+                        string suffix = pattern[(starStarIdx + 2)..].TrimStart('/', '\\');
+
+                        if (!string.IsNullOrEmpty(prefix))
+                            searchDir = Path.GetFullPath(prefix, searchDir);
+
+                        filePattern = string.IsNullOrEmpty(suffix) ? "*" : suffix;
+                    }
+                    else if (pattern.Contains('/') || pattern.Contains('\\'))
+                    {
+                        // 包含目录分隔符：提取目录和文件名部分
+                        var dir = Path.GetDirectoryName(pattern);
+                        filePattern = Path.GetFileName(pattern);
+                        if (!string.IsNullOrEmpty(dir))
+                            searchDir = Path.GetFullPath(dir, searchDir);
+                        recursive = false;
+                    }
+                    else
+                    {
+                        filePattern = pattern;
+                        recursive = false;
+                    }
+
+                    if (!Directory.Exists(searchDir))
+                    {
+                        ctx.WriteStderrLine($"❌ Error: Directory not found: {searchDir}");
+                        return 2;
+                    }
+
+                    string[] ignoredDirs = [
+                        $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}",
+                        $"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}",
+                        $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                        $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                        $"{Path.DirectorySeparatorChar}.vs{Path.DirectorySeparatorChar}"
+                    ];
+
+                    var enumOpts = new EnumerationOptions
+                    {
+                        IgnoreInaccessible = true,
+                        RecurseSubdirectories = recursive,
+                        MatchCasing = MatchCasing.PlatformDefault
+                    };
+
+                    var results = new List<(string Path, DateTimeOffset ModTime)>();
+                    try
+                    {
+                        foreach (var file in Directory.EnumerateFiles(searchDir, filePattern, enumOpts))
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            if (ignoredDirs.Any(d => file.Contains(d, StringComparison.OrdinalIgnoreCase)))
+                                continue;
+
+                            var fi = new FileInfo(file);
+                            results.Add((file, SafeLastWriteTimeUtc(fi)));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ctx.WriteStderrLine($"Warning: {ex.Message}");
+                    }
+
+                    // 按修改时间降序排列
+                    results.Sort((a, b) => b.ModTime.CompareTo(a.ModTime));
+
+                    var sb = new StringBuilder();
+                    foreach (var (filePath, modTime) in results)
+                    {
+                        sb.AppendLine(filePath);
+                    }
+
+                    ctx.WriteStdoutLine(sb.ToString());
+                    return 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    ctx.WriteStderrLine("Operation canceled.");
+                    return 137;
+                }
+                catch (Exception ex)
+                {
+                    ctx.WriteStderrLine($"❌ Error ({ex.GetType().Name}): {ex.Message}");
+                    return 1;
+                }
+            },
+            runInBackground: false,
+            timeoutMs: 30000
+        );
+    }
+
+    [Description("写入文件内容（覆盖整个文件）。适用于创建新文件或需要完全重写文件内容的场景。" +
+        "如果文件不存在则创建（包括必要的父目录）。如果文件已存在则覆盖。")]
+    public string WriteFile(
+        [Description("文件路径")] string filePath,
+        [Description("要写入的完整文件内容")] string content,
+        [Description("工作目录（可选）")] string workingDirectory = "")
+    {
+        try
+        {
+            var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                ? GetDefaultWorkspace()
+                : workingDirectory!;
+
+            var full = Path.GetFullPath(filePath, baseDir);
+
+            // 自动创建父目录
+            var dir = Path.GetDirectoryName(full);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            bool existed = File.Exists(full);
+            content ??= string.Empty;
+
+            // 原子写入
+            var tmp = full + ".tmp." + Guid.NewGuid().ToString("N");
+            File.WriteAllText(tmp, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(tmp, full, overwrite: true);
+
+            int lineCount = content.Split('\n').Length;
+
+            return $"✅ File {(existed ? "overwritten" : "created")}: {full}\nCharacters: {content.Length}\nLines: {lineCount}";
+        }
+        catch (Exception ex)
+        {
+            return $"❌ Error ({ex.GetType().Name}): {ex.Message}";
+        }
+    }
+
+    [Description("读取文件内容。默认从头读取最多 2000 行。可指定 offset（起始行号）和 limit（读取行数）来读取大文件的特定片段。" +
+        "输出格式为带行号的 cat -n 风格。")]
+    public string ReadFile(
+        [Description("文件路径")] string filePath,
+        [Description("从第几行开始读（1-based，默认从第 1 行开始）")] int offset = 0,
+        [Description("读取多少行（默认不指定则最多读取 2000 行）")] int limit = 0,
+        [Description("工作目录（可选）")] string workingDirectory = "")
+    {
+        return RunNative(
+            displayCommand: $"read {filePath}",
+            runner: async (ctx, ct) =>
+            {
+                try
+                {
+                    var baseDir = string.IsNullOrWhiteSpace(workingDirectory)
+                        ? GetDefaultWorkspace()
+                        : workingDirectory!;
+
+                    var full = Path.GetFullPath(filePath, baseDir);
+
+                    if (!File.Exists(full))
+                    {
+                        ctx.WriteStderrLine($"❌ Error: File not found: {full}");
+                        return 2;
+                    }
+
+                    int startLine = offset > 0 ? offset : 1;
+                    int maxLines = limit > 0 ? limit : CatReadPageLines;
+
+                    await using var fs = new FileStream(
+                        full,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        bufferSize: 64 * 1024,
+                        options: FileOptions.Asynchronous | FileOptions.SequentialScan
+                    );
+
+                    using var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+
+                    // 跳到起始行
+                    int currentLineNo = 0;
+                    while (currentLineNo < startLine - 1)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var skip = await sr.ReadLineAsync().ConfigureAwait(false);
+                        if (skip == null)
+                        {
+                            ctx.WriteStderrLine($"Warning: offset {startLine} exceeds file length ({currentLineNo} lines).");
+                            return 0;
+                        }
+                        currentLineNo++;
+                    }
+
+                    // 读取指定行数
+                    int emitted = 0;
+                    while (emitted < maxLines)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var line = await sr.ReadLineAsync().ConfigureAwait(false);
+                        if (line == null) break;
+
+                        currentLineNo++;
+                        ctx.WriteStdoutLine($"{currentLineNo,4} | {line}");
+                        emitted++;
+                    }
+
+                    // 检查是否还有更多内容
+                    ct.ThrowIfCancellationRequested();
+                    var lookahead = await sr.ReadLineAsync().ConfigureAwait(false);
+
+                    if (lookahead != null)
+                    {
+                        ctx.WriteStdoutLine($"\n--more-- (File continues below line {currentLineNo})");
+                        ctx.WriteStdoutLine($"Use ReadFile with offset={currentLineNo + 1} to continue reading.");
+                    }
+
+                    return 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    ctx.WriteStderrLine("Operation canceled.");
+                    return 137;
+                }
+                catch (Exception ex)
+                {
+                    ctx.WriteStderrLine($"❌ Error ({ex.GetType().Name}): {ex.Message}");
+                    return 1;
+                }
+            },
+            runInBackground: false,
+            timeoutMs: 0
+        );
+    }
 }
