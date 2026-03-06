@@ -167,4 +167,8 @@ public sealed class WebSocketChatIO : IChatIO, IAsyncDisposable
         _connectionCts.Dispose();
         _aiCts?.Dispose();
     }
+
+    public void ShowStop()
+    {
+    }
 }

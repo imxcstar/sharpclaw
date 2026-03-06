@@ -1,11 +1,11 @@
-using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using sharpclaw.Chat;
+using sharpclaw.Memory;
+using sharpclaw.UI;
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
-
-using sharpclaw.Memory;
-using sharpclaw.UI;
 
 namespace sharpclaw.Agents;
 
@@ -15,10 +15,16 @@ namespace sharpclaw.Agents;
 /// </summary>
 public class MemorySaver
 {
+    internal const string AutoSaverKey = "__auto_saver__";
+
     private readonly IChatClient _client;
     private readonly IMemoryStore _memoryStore;
     private readonly AITool[] _fileTools;
     private readonly string _agentPrompt;
+
+    private readonly string _workingMemoryPath;
+    private readonly string _recentMemoryPath;
+    private readonly string _primaryMemoryPath;
 
     public MemorySaver(
         IChatClient baseClient,
@@ -31,50 +37,44 @@ public class MemorySaver
         _client = baseClient;
         _memoryStore = memoryStore;
         _fileTools = fileTools;
+        _workingMemoryPath = workingMemoryPath;
+        _recentMemoryPath = recentMemoryPath;
+        _primaryMemoryPath = primaryMemoryPath;
 
-        _agentPrompt = @$"你是 Sharpclaw 的**记忆淬炼专家 (Memory Consolidation Specialist)**。
-**触发背景**：当前的对话上下文即将达到 Token 上限，早期的原始对话日志即将被永久裁剪（遗忘）。
-**你的核心使命**：在上下文被销毁前，作为最后一道防线，提取对话中的高价值信息并持久化到向量记忆库中，确保 Sharpclaw 在未来的对话中不会“失忆”或重复踩坑。
-
-## 可用的记忆源
-
-| 记忆类型 | 位置 | 权限 |
-|---------|------|------|
-| 工作记忆（即将被裁剪的对话） | {workingMemoryPath} | 只读 |
-| 近期记忆（进度摘要看板） | {recentMemoryPath} | 只读 |
-| 核心记忆（全局硬性约束） | {primaryMemoryPath} | 只读 |
-| 向量记忆（细粒度长期知识库） | 通过 SearchMemory / Save / Update / Remove 管理 | 读写 |
-
-**🚨 严禁越权：你只能通过工具管理向量记忆库，其他记忆文件仅供参考，禁止修改。**
+        _agentPrompt = @"你是系统的**长期记忆淬炼助手 (Long-term Memory Consolidation Assistant)**。
+**触发背景**：当前的对话上下文即将达到 Token 上限，早期的原始对话日志即将被永久裁剪。
+**你的核心使命**：作为记忆流失前的最后一道防线，提取对话中的高价值长效信息，并持久化到向量记忆库中，确保系统在未来的漫长交互中不会“失忆”、不会前后矛盾、不重复踩坑。
 
 ## 🧠 淬炼与提取准则 (What to Save)
 
-不要把垃圾塞进记忆库！忽略毫无营养的寒暄、拼写错误、以及简单的“写一段基础代码”的临时过程。你**只关注**以下五类高价值目标：
+不要把垃圾塞进向量记忆库！忽略无营养的寒暄、临时的语法纠错、或单次生效的普通问答。你**只关注**以下五类具有“长期复用价值”的目标：
 
-1. **Preference (偏好与禁忌)**：用户明确提出的规则。例如：“以后强制使用 TypeScript”、“绝不要在 Controller 层写业务逻辑”、“缩进必须是 4 个空格”。
-2. **Architecture (架构与事实)**：项目的核心设定。例如：“前端技术栈是 Next.js + Tailwind”、“数据库配置了主从分离”、“当前支付网关用的是 Stripe”。
-3. **Lesson (血泪教训/避坑指南)**：花费了大量轮次才排查出的 Bug 及其根本原因。例如：“因为中间件拦截了 raw body 导致 Webhook 签名失败，必须单独放行”。**（极其重要，这是 AI 进化的关键）**
-4. **Decision (关键决策)**：经过讨论后确定的方案。例如：“最终决定放弃 Redis，改用数据库复合索引解决慢查询”。
-5. **Todo (遗留状态)**：因为上下文截断而被迫中断的未竟事业。例如：“正在重构 auth 模块，下一步需要测试 JWT 续期逻辑”。
+1. **偏好与约束 (Preferences & Constraints)**：用户明确提出的长期规则。例如：“回复强制使用 Markdown 表格”、“不要推荐任何海鲜类食物”、“预算严格控制在 1 万以内”。
+2. **核心事实与设定 (Core Context & Facts)**：跨对话有效的客观背景。例如：“主角的性格是社恐且多疑”、“当前项目的核心受众是中老年人”、“前端技术栈使用的是 React”。
+3. **经验与避坑指南 (Insights & Lessons)**：经过多次试错才得出的宝贵经验。例如：“用户极度反感被连续反问，必须直接给出方案”、“办理申根签证至少需要提前 3 个月，规划行程需预留此时间”。（**极其重要，这是 AI 进化的关键**）
+4. **关键决策 (Key Decisions)**：经过讨论后确立的重大方向变更。例如：“最终决定放弃线下推广，全面转向小红书运营”。
+5. **长期待办 (Long-term Todos)**：因上下文截断被迫中断、或约定在未来处理的事项。例如：“第一阶段大纲已定，下一步需要构思反派的背景故事”。
 
 ## 🔄 记忆更新法则 (How to Update - 极其重要)
 
-**向量记忆库极易发生“知识污染”。在保存任何新信息前，你必须严格执行查重与冲突覆盖！**
+**向量库极易发生“知识污染”。在保存任何新信息前，你必须严格执行查重与冲突覆盖！**
 
-1. **先搜后写**：提取出知识点后，先用 `SearchMemory` 搜索相关关键词（可多次使用不同关键词）。
-2. **状态更新**：如果发现用户改变了主意（旧记忆：“前端用 Vue” -> 新对话：“我们要全部迁移到 React”），**必须调用 `UpdateMemory` 或 `RemoveMemory` 抹除旧记忆**，再保存新记忆。绝对不能让两条冲突的设定同时存在！
-3. **合并同类项**：如果库里已经有关于“数据库配置”的记忆，而今天新增了“Redis 端口号”，请将它们合并更新为一条完整记忆。
-4. **清理过期 Todo**：如果对话显示某个之前存入的 Todo（如“待修复登录 Bug”）已经完成，请主动将其从向量库中 `RemoveMemory`。
+1. **先搜后写**：在提取出某个知识点后，必须先调用 `Search` 搜索相关关键词（可多次尝试不同关键词）。
+2. **状态覆写（解决冲突）**：如果发现用户改变了主意（旧记忆：“旅行目的地是巴黎” -> 新对话：“我们改去伦敦了”），**必须调用 `Update` 或 `Remove` 抹除旧记忆**，再保存新记忆。绝对不能让两条互相冲突的设定同时存在！
+3. **合并同类项**：如果库里已有“世界观设定”的记忆，今天又新增了“魔法体系的具体规则”，请将它们合并后用 `Update` 更新为一条更完整的记忆。
+4. **清理过期待办**：如果当前对话显示某个之前存入的待办（如“待确认预算”）已经完成，请主动将其从向量库中 `Remove`。
 
-## 格式要求
-- 保存的记忆文本必须**高度浓缩、独立且自包含**。
-- 错误示范：“用户说他不喜欢这个方案”。（缺乏主语和上下文，未来读取时完全看不懂）
-- 正确示范：“【偏好】用户不希望在项目中引入任何重量级的 ORM 框架（如 Entity Framework），偏好使用 Dapper 进行轻量级数据库操作。”";
+## ✍️ 格式要求（严格遵循）
+
+- 保存的记忆文本必须**高度浓缩、独立且自包含**（脱离当前上下文也能看懂）。
+- ❌ **错误示范**：“用户说他不喜欢这个方案。”（缺乏主语和前因后果，未来检索出来完全是一头雾水）。
+- ✅ **正确示范**：“【偏好】用户不希望在旅行规划中安排过于紧凑的行程，偏好每天只深度游览一个核心景点。”
+- ✅ **正确示范**：“【决策】项目营销方案已放弃传统的线下发传单模式，全面改为线上短视频引流。”
+";
     }
 
     public async Task SaveAsync(
         IReadOnlyList<ChatMessage> history,
-        string userInput,
         CancellationToken cancellationToken = default)
     {
         if (history.Count == 0)
@@ -164,18 +164,32 @@ public class MemorySaver
 
         // ── 构建输入 ──
 
-        var memoryCount = await _memoryStore.CountAsync(cancellationToken);
+        var messages = new List<ChatMessage>();
 
-        var sb2 = new StringBuilder();
-        sb2.AppendLine($"## 向量记忆库状态：已存 {memoryCount} 条");
-        sb2.AppendLine();
-        sb2.AppendLine("## 用户本轮输入");
-        sb2.AppendLine();
-        sb2.AppendLine(userInput);
-        sb2.AppendLine();
-        sb2.AppendLine("## 最近对话内容");
-        sb2.AppendLine();
-        sb2.Append(fullText);
+        var workingMemoryContent = ReadWorkingMemory() ?? "";
+        if (!string.IsNullOrWhiteSpace(workingMemoryContent))
+        {
+            var workingMemoryMessages = JsonSerializer.Deserialize<List<ChatMessage>>(workingMemoryContent);
+            if (workingMemoryMessages != null && workingMemoryMessages.Count > 0)
+                messages.AddRange(workingMemoryMessages);
+        }
+
+        if (messages.Count == 0)
+            return;
+
+        var primaryMemoryContent = ReadPrimaryMemory() ?? "";
+        if (!string.IsNullOrWhiteSpace(primaryMemoryContent))
+        {
+            messages.Add(new ChatMessage(ChatRole.User, "查询核心记忆"));
+            MemoryPipelineChatReducer.InjectFakeReadFile(messages, _primaryMemoryPath, primaryMemoryContent, AutoSaverKey);
+        }
+
+        var recentMemoryContent = ReadRecentMemory() ?? "";
+        if (!string.IsNullOrWhiteSpace(recentMemoryContent))
+        {
+            messages.Add(new ChatMessage(ChatRole.User, "查询记忆快照"));
+            MemoryPipelineChatReducer.InjectFakeReadFile(messages, _recentMemoryPath, recentMemoryContent, AutoSaverKey);
+        }
 
         AIFunction[] vectorTools =
         [
@@ -198,9 +212,29 @@ public class MemorySaver
         });
 
         await RunAgentStreamingAsync(agent,
-            new ChatMessage(ChatRole.User, sb2.ToString()),
+            [.. messages, new ChatMessage(ChatRole.User, "根据以上对话历史，写入或整理向量记忆。")],
             "MemorySaver", cancellationToken);
     }
+    private static string? ReadFile(string? path)
+    {
+        if (path is null || !File.Exists(path))
+            return null;
+        try
+        {
+            var content = File.ReadAllText(path);
+            return string.IsNullOrWhiteSpace(content) ? null : content;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>读取工作记忆。</summary>
+    private string? ReadWorkingMemory() => ReadFile(_workingMemoryPath);
+
+    /// <summary>读取近期记忆。</summary>
+    private string? ReadRecentMemory() => ReadFile(_recentMemoryPath);
+
+    /// <summary>读取核心记忆。</summary>
+    private string? ReadPrimaryMemory() => ReadFile(_primaryMemoryPath);
 
     private static StringBuilder FormatMessages(IReadOnlyList<ChatMessage> messages, int? maxResultLength = null)
     {
@@ -243,11 +277,11 @@ public class MemorySaver
     }
 
     private static async Task RunAgentStreamingAsync(
-        ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
+        ChatClientAgent agent, IEnumerable<ChatMessage> input, string logPrefix, CancellationToken cancellationToken)
     {
         var session = await agent.CreateSessionAsync();
 
-        await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
+        await foreach (var update in agent.RunStreamingAsync(input, session).WithCancellation(cancellationToken))
         {
             foreach (var content in update.Contents)
             {

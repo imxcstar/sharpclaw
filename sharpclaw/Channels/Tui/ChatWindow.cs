@@ -382,4 +382,8 @@ public sealed class ChatWindow : Runnable, IChatIO
 
         return k;
     }
+
+    public void ShowStop()
+    {
+    }
 }

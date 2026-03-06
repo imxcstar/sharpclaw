@@ -45,6 +45,9 @@ public interface IChatIO
     /// <summary>切换到"AI 运行中"状态。</summary>
     void ShowRunning();
 
+    /// <summary>切换到"AI 停止"状态。</summary>
+    void ShowStop();
+
     /// <summary>获取用于取消当前 AI 运行的 token。</summary>
     CancellationToken GetAiCancellationToken();
 

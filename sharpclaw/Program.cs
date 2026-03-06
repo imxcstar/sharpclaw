@@ -91,6 +91,7 @@ static async Task RunCliAsync(string[] args)
     Console.WriteLine(new string('-', 48));
 
     var chatIO = new sharpclaw.Channels.Cli.CliChatIO();
+    AppLogger.SetInstance(new sharpclaw.Channels.Cli.CliAppLogger(chatIO));
     var agent = new sharpclaw.Agents.MainAgent(
         bootstrap.Config, bootstrap.MemoryStore, bootstrap.CommandSkills,
         chatIO: chatIO, bootstrap.AgentContext);

@@ -186,6 +186,10 @@ public sealed class QQBotChatIO : IChatIO
         return cleaned.Trim();
     }
 
+    public void ShowStop()
+    {
+    }
+
     public record PendingMessage(string Text, Message Message, MessageSource Source);
 }
 

@@ -110,7 +110,7 @@ public class MemoryPipelineChatReducer : IChatReducer
 
         List<ChatMessage> allMessages = [.. OldWorkingMemoryContent, .. conversationMessages];
         var messageText = ConvertMessagesToText(allMessages).Replace(" ", "");
-        if (messageText.Length > 200000)
+        if (messageText.Length > 150000)
         {
             // 进入裁剪，清空累积的工作记忆
             OldWorkingMemoryContent.Clear();
@@ -122,7 +122,7 @@ public class MemoryPipelineChatReducer : IChatReducer
             {
                 try
                 {
-                    await _memorySaver.SaveAsync(conversationMessages, UserInput, cancellationToken);
+                    await _memorySaver.SaveAsync(allMessages, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -144,7 +144,7 @@ public class MemoryPipelineChatReducer : IChatReducer
             {
                 try
                 {
-                    archiveResult = await _archiver.ArchiveAsync(conversationMessages, cancellationToken);
+                    archiveResult = await _archiver.ArchiveAsync(allMessages, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -272,7 +272,7 @@ public class MemoryPipelineChatReducer : IChatReducer
     /// <param name="fileContent">你已经提前在后台读取好的文件内容（建议自带行号，与真实工具保持一致）</param>
     /// <param name="startLine">起始行号</param>
     /// <param name="endLine">结束行号</param>
-    public static void InjectFakeCommandCat(
+    public static void InjectFakeReadFile(
         List<ChatMessage> messages,
         string filePath,
         string fileContent,
@@ -286,12 +286,10 @@ public class MemoryPipelineChatReducer : IChatReducer
             new TextContent($"正在读取文件 {Path.GetFileName(filePath)} 的内容...（行 {startLine} 到 {endLine}）"),
             new FunctionCallContent(
                 callId: callId,
-                name: "CommandCat",
+                name: "ReadFile",
                 arguments: new Dictionary<string, object?>
                 {
-                    { "filePath", filePath },
-                    { "startLine", startLine },
-                    { "endLine", endLine }
+                    { "filePath", filePath }
                 }
             )
         ])
@@ -349,13 +347,13 @@ public class MemoryPipelineChatReducer : IChatReducer
 
         if (!string.IsNullOrWhiteSpace(primaryMemory))
         {
-            InjectFakeCommandCat(memoryMessages, _agentContext.GetSessionPrimaryMemoryFilePath(), primaryMemory, AutoPrimaryMemoryKey);
+            InjectFakeReadFile(memoryMessages, _agentContext.GetSessionPrimaryMemoryFilePath(), primaryMemory, AutoPrimaryMemoryKey);
             AppLogger.Log($"[Reducer] 已注入核心记忆（{primaryMemory.Length}字）");
         }
 
         if (!string.IsNullOrWhiteSpace(recentMemory))
         {
-            InjectFakeCommandCat(memoryMessages, _agentContext.GetSessionRecentMemoryFilePath(), recentMemory, AutoRecentMemoryKey);
+            InjectFakeReadFile(memoryMessages, _agentContext.GetSessionRecentMemoryFilePath(), recentMemory, AutoRecentMemoryKey);
             AppLogger.Log($"[Reducer] 已注入近期记忆（{recentMemory.Length}字）");
         }
     }

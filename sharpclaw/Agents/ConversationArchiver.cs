@@ -22,12 +22,9 @@ public class ConversationArchiver
     private const int RecentMemoryMaxLength = 30000;
 
     private readonly IChatClient _client;
-    private readonly string _sessionDirPath;
     private readonly string _workingMemoryPath;
     private readonly string _recentMemoryPath;
     private readonly string _primaryMemoryPath;
-    private readonly string _historyDir;
-    private readonly AITool[] _tools;
     private readonly string _summarizerPrompt;
     private readonly string _consolidatorPrompt;
 
@@ -36,121 +33,82 @@ public class ConversationArchiver
         string sessionDirPath,
         string workingMemoryPath,
         string recentMemoryPath,
-        string primaryMemoryPath,
-        AITool[] tools)
+        string primaryMemoryPath)
     {
         _client = client;
-        _sessionDirPath = sessionDirPath;
         _workingMemoryPath = workingMemoryPath;
         _recentMemoryPath = recentMemoryPath;
         _primaryMemoryPath = primaryMemoryPath;
-        _tools = tools;
-        _historyDir = Path.Combine(_sessionDirPath, "history");
 
-        _summarizerPrompt = @$"你是 Sharpclaw 的**战术执行记录员 (Tactical Progress Tracker)**。
-你的任务是提取即将被裁剪的对话（工作记忆）中的核心执行过程，并以高信息密度、结构化的格式追加到“近期记忆（开发日志）”中。
-这能确保 Sharpclaw 在漫长或被打断的自主执行过程中，准确记住“最初的目标”、“踩过的坑与决策”以及“紧接着要干什么”。
+        _summarizerPrompt = @"你是系统的**对话记忆压缩助手 (Context Compression Assistant)**。
+你的任务是对即将超长的历史对话进行结构化总结，提取出最重要的上下文信息，以确保系统在后续交互中能够无缝衔接，保持记忆连贯。
 
-## 可用的记忆文件
+## 📝 总结原则
+1. **聚焦核心事实**：过滤掉无意义的寒暄和已放弃的无效方案，重点保留有价值的讨论内容、技术细节（如关键变量、报错信息）或业务逻辑。
+2. **结果导向提取**：避免按时间顺序记录对话流水账，应直接归纳出探讨的最终结果和确定的处理方式。
+3. **分块记录**：长对话通常包含多个不同的任务或讨论点。请根据对话的实际内容，将不同主题的上下文拆分成独立的事项逐条记录。
 
-| 记忆类型 | 文件路径 | 权限 |
-|---------|---------|------|
-| 工作记忆（被裁剪对话） | {_workingMemoryPath} | 只读 |
-| 近期记忆（进度摘要） | {_recentMemoryPath} | 读写 |
-| 核心记忆（全局状态） | {_primaryMemoryPath} | 只读 |
+## ✍️ 输出格式（严格遵循）
+请根据对话涉及的主题数量，输出一条或多条记录：
 
-**🚨 严禁越权：你只能写入近期记忆文件，禁止修改其他文件。**
+### 💬 记忆快照
+**1. [事项/主题名称]**
+- **📌 执行过程**：[客观陈述该事项执行了哪些核心操作、排查了什么问题]
+- **✅ 结论与待办**：[总结该事项达成的共识、确认的方案或遗留的下一步]
 
-## 📝 提取与追加规则 (Extraction & Append Protocol)
+**2. [事项/主题名称]** (若对话涉及多个独立事项，则继续罗列)
+- **📌 执行过程**：...
+- **✅ 结论与待办**：...
 
-作为自主型 Agent 的记录员，你必须过滤掉大模型盲目的“试错过程”和“无意义的寒暄”，只提炼**真正的实质性推进和有价值的排错经验**：
+## 💡 参考示例
 
-1. **🎯 目标 (Goal)**：当前这组操作是为了解决什么原始需求？（如果是承接上文的旧任务，简述即可）。
-2. **🛠️ 执行与决策 (Execution & Rationale)**：
-    - **关键操作**：精简记录查阅了哪些核心文件、修改了什么关键逻辑、运行了什么命令。（禁止大段粘贴代码，必须使用函数名、文件路径或关键 1~2 行代码指代）。
-    - **排错与决策**：重点记录自主排错过程和避坑指南！例如：“运行测试遇到 `ECONNREFUSED`，查明是端口冲突，已将会话服务端口改为 8081”。记录为什么选 A 方案不选 B 方案。
-3. **⚠️ 遗留 (Caveats)**：当前产生的技术债、临时硬编码（Hardcode）数据、或尚未处理的边缘情况（Edge Cases）。若无则写“无”。
-4. **📌 状态 (Status)**：[已完成 / 进行中 / 被阻塞] - [简短说明当前卡点或实际进度]。
-5. **🚀 下一步 (Next Steps)**：紧接着需要执行的 1~3 个具体动作，必须具有极强的可执行性。
+### 💬 记忆快照
+**1. MongoDB 连接超时问题排查**
+- **📌 执行过程**：排查 `UserService` 中 `TimeoutException` 报错。检查了网络配置和环境变量。
+- **✅ 结论与待办**：确认原因是 `appsettings.json` 遗漏了 `authSource=admin` 参数。已修复并测试通过。遗留：尚未实现异常重试机制。
 
-## ✍️ 写入格式（严格遵循）
+**2. 用户登录鉴权 API 设计**
+- **📌 执行过程**：讨论了 JWT 的使用方案，并编写了 Token 签发的核心逻辑。
+- **✅ 结论与待办**：确认 Access Token 有效期设为 2 小时。下一步需接续开发对应的 Refresh Token 刷新接口。
+";
 
-将摘要**追加 (Append)** 到近期记忆文件末尾，必须使用以下 Markdown 结构：
+        _consolidatorPrompt = @"你是系统的**核心记忆整合助手 (Core Memory Consolidator)**。
+你的任务是将近期产生的“记忆快照”提炼、过滤，并无缝合并到长期的“核心记忆”中。
 
-### yyyy-MM-dd HH:mm
-- **🎯 目标**：[一句话概括]
-- **🛠️ 执行与决策**：
-    - [操作]：...
-    - [排错/避坑]：...
-- **⚠️ 遗留**：[说明临时妥协 / 无]
-- **📌 状态**：[已完成 / 进行中 / 被阻塞] - ...
-- **🚀 下一步**：
-    - [动作1]
-    - [动作2]
+无论当前进行的是文学创作、旅行规划、学术研究还是项目管理，核心记忆都是系统每次交互的最高全局上下文。它必须保持高度结构化、绝对准确，且**没有任何冗余的微观执行细节**。
 
-（末尾空两行\n\n）
+## 🔄 核心整合法则 (Consolidation Protocol)
 
-## ✂️ 冗余修剪机制 (Crucial: Deduplication)
-- **禁止流水账**：写入前必须读取已有的近期记忆。如果当前对话只是上一个步骤的微小推进（比如：刚才写错了一个变量名导致编译失败，当前对话只是改了这个错别字），**合并语义**，不要把这种低级错误当作重大执行决策长篇大论记录。
-- **动态接续**：如果发现任务状态没有本质改变，重点只更新“📌 状态”和“🚀 下一步”，保持日志的清爽。";
+1. **状态更新，而非日志追加**：核心记忆不是历史记录本！不要记录“刚刚做了什么”，而是要总结“当前的全局状态是什么”、“确立了什么新规矩”。在输出时，你必须将新提取的信息与旧的核心记忆**融合成一份全新的状态文档**。
+2. **无情清理与覆写过期信息**：
+    - 如果新快照显示某项决策被推翻（例如：旅行目的地从巴黎改为伦敦，或文章主角设定从男性改为女性），**必须在输出时彻底抹除旧设定**，绝对不能让冲突信息同时存在。
+    - 如果宏观待办中的某项任务已在快照中显示完成，必须将其剔除；若其执行过程产生了通用经验，应将其转移到“经验与避坑”中。
+3. **剥离微观细节**：舍弃具体的遣词造句修改、临时的试错过程或单次对话的琐碎细节。只保留全局性的框架设计、硬性约束条件或高价值的结论。
 
-        _consolidatorPrompt = @$"你是 Sharpclaw 的**全局状态架构师 (Global State Architect)**。
-你的任务是从近期记忆（开发日志）中提取具有长期价值的“规则、架构、教训和宏观进度”，并将它们巩固到“核心记忆”文件中。
-        
-核心记忆是 Sharpclaw 每次行动的最高纲领。它必须保持极度精简、绝对准确，且**没有任何冗余废话**。
+## ✍️ 输出格式（严格遵循）
 
-## 可用的记忆文件
+请综合现有的核心记忆与新的记忆快照，提取并重新输出一份**完整且最新的**核心记忆。必须严格使用以下 Markdown 结构罗列项（若某项为空则写“无”）：
 
-| 记忆类型 | 文件路径 | 权限 |
-|---------|---------|------|
-| 工作记忆（当前对话） | {_workingMemoryPath} | 只读 |
-| 近期记忆（进度摘要） | {_recentMemoryPath} | 只读 |
-| 核心记忆（全局状态） | {_primaryMemoryPath} | 读写 |
+### 🧠 核心记忆 (Core Memory)
 
-**🚨 严禁越权：你只能写入核心记忆文件，其他记忆文件仅供参考，禁止修改。**
+**🎯 全局目标与当前阶段 (Goal & Phase)**
+- [当前探讨的终极目标、核心项目或所处的宏观进度阶段]
 
-## 🔄 核心巩固法则 (Consolidation Protocol)
+**👤 偏好与禁忌 (Preferences & Taboos)**
+- [用户明确要求的偏好：如“回答必须精简”、“规划行程时只考虑高铁”、“文章风格要幽默”]
+- [行为禁忌：如“绝对不要输出长篇大论的免责声明”、“不要推荐海鲜类食物”]
 
-1. **全量覆写，拒绝流水账**：核心记忆不是日志！不要记录“今天做了什么”，只记录“现在的系统是什么样”、“规矩是什么”。在写入时，你必须将新提取的信息与旧的核心记忆**融合成一份全新的文档**，并全量覆盖写入。
-2. **无情清理过期状态**：
-    - 如果近期记忆显示某项技术被替换（如 Vue 换成了 React），**必须在核心记忆中抹除旧技术栈**，绝对不能让冲突信息同时存在。
-    - 已经完成的“下一步计划”，将其从核心记忆的“待办”中剔除；如果产生了有价值的结论，将其转移到“决策与教训”中。
-3. **提炼血泪教训 (Lessons Learned)**：如果近期记忆中记录了踩过的坑（如“某中间件会导致跨域失败”），必须将其高度浓缩后升格为核心记忆，防止 AI 未来重蹈覆辙。
-4. **剥离执行细节**：扔掉具体的行号、临时 Bug 修复过程和普通的文件名。只保留全局性的架构文件路径（如“全局路由在 `src/router.ts`”）或硬性约束。
+**🧩 核心设定与关键事实 (Core Context & Facts)**
+- [已确认的核心框架、大纲设计、关键背景信息]
+- [重要的前置条件或全局设定（如：小说的人物关系图、项目的预算限制、活动的核心受众）]
 
-## ✍️ 核心记忆标准格式（严格遵循）
+**📜 经验与避坑 (Lessons & Insights)**
+- [经过试错得出的宝贵经验，防止未来重蹈覆辙，如：“用户不喜欢被反问”、“办理某签证至少需要提前3个月，以后需优先提醒”]
 
-将融合后的完整状态写入核心记忆文件，**必须**使用以下 Markdown 分区结构（使用 Emoji 作为视觉锚点）：
-
-```markdown
-## 🎯 全局目标 (Global Goal)
-- [当前项目的终极目标或核心产品定位]
-
-## 👤 偏好与禁忌 (Preferences & Taboos)
-- [代码风格：如“强制使用 TypeScript，禁用 any”]
-- [行为禁忌：如“绝对不要在 Controller 层写业务逻辑”]
-
-## 🏗️ 架构与基础设施 (Architecture & Infra)
-- [技术栈：如 Next.js + Tailwind + PostgreSQL]
-- [部署/环境设定：如“运行在 Docker 中，本地端口 8080”]
-- [核心目录/文件指引：如“数据库迁移文件统一放在 `/prisma`”]
-
-## 📜 关键决策与教训 (Decisions & Lessons)
-- [决策]：放弃 Redis 缓存，改用数据库复合索引以节省内存 (2026-03-01)。
-- [教训]：Stripe Webhook 签名验证必须使用 raw body，已在路由层单独拦截处理，未来对接其他 Webhook 需注意此坑。
-
-## 📋 宏观待办 (Macro Todos)
-- [仅保留大颗粒度的里程碑或核心未完成模块，不要写“修复第50行的报错”]
-- ...
-```
-
-## 🚀 执行流程
-
-1. 读取核心记忆文件（若不存在则视为空白）。
-2. 仔细阅读需要巩固的近期记忆摘要。
-3. 识别出状态变更（哪些任务完成了？哪些技术栈变了？新增了什么规矩？）。
-4. 在脑海中对原有核心记忆进行“增、删、改”合并。
-5. 将最终的完整 Markdown 输出并覆盖写入核心记忆文件。";
+**📋 宏观待办 (Macro Todos)**
+- [仅保留大颗粒度的里程碑、核心未完成模块或下一步重大方向]
+- [不要写入“修改第三段的错别字”这类微观任务]
+";
     }
 
     /// <summary>
@@ -202,17 +160,6 @@ public class ConversationArchiver
         {
             AppLogger.SetStatus("生成对话摘要...");
 
-            var options = new ChatOptions
-            {
-                Instructions = _summarizerPrompt,
-                Tools = _tools
-            };
-
-            var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new ChatClientAgentOptions
-            {
-                ChatOptions = options
-            });
-
             var messages = new List<ChatMessage>();
 
             var workingMemoryContent = ReadWorkingMemory() ?? "";
@@ -230,19 +177,20 @@ public class ConversationArchiver
             if (!string.IsNullOrWhiteSpace(primaryMemoryContent))
             {
                 messages.Add(new ChatMessage(ChatRole.User, "查询核心记忆"));
-                MemoryPipelineChatReducer.InjectFakeCommandCat(messages, _primaryMemoryPath, primaryMemoryContent, AutoSummaryKey);
+                MemoryPipelineChatReducer.InjectFakeReadFile(messages, _primaryMemoryPath, primaryMemoryContent, AutoSummaryKey);
             }
 
             var recentMemoryContent = ReadRecentMemory() ?? "";
             if (!string.IsNullOrWhiteSpace(recentMemoryContent))
             {
-                messages.Add(new ChatMessage(ChatRole.User, "查询近期记忆"));
-                MemoryPipelineChatReducer.InjectFakeCommandCat(messages, _recentMemoryPath, recentMemoryContent, AutoSummaryKey);
+                messages.Add(new ChatMessage(ChatRole.User, "查询原来的记忆快照"));
+                MemoryPipelineChatReducer.InjectFakeReadFile(messages, _recentMemoryPath, recentMemoryContent, AutoSummaryKey);
             }
-
-            await RunAgentStreamingAsync(agent,
-                new ChatMessage(ChatRole.User, "总结以上对话，生成摘要并保存到近期记忆。"),
-                "Summarizer", cancellationToken);
+            var ret = await _client.AsAIAgent(_summarizerPrompt).RunAsync([.. messages, new ChatMessage(ChatRole.User, "根据以上对话历史，生成完成的记忆快照。")], cancellationToken: cancellationToken);
+            if (!string.IsNullOrWhiteSpace(ret.Text))
+            {
+                File.WriteAllText(_recentMemoryPath, ret.Text);
+            }
         }
         catch (Exception ex)
         {
@@ -258,87 +206,43 @@ public class ConversationArchiver
     {
         AppLogger.SetStatus("巩固核心记忆...");
 
-        // 按 ### 分段，取前半部分巩固，保留后半部分
-        var sections = SplitSections(recentMemory);
-        if (sections.Count <= 1)
-            return;
+        var messages = new List<ChatMessage>();
 
-        var splitIndex = sections.Count / 2;
-        var toConsolidate = string.Join("", sections.Take(splitIndex));
-        var toRetain = string.Join("", sections.Skip(splitIndex));
-
-        var sb = new StringBuilder();
-        sb.AppendLine("## 需要巩固的近期记忆摘要");
-        sb.AppendLine();
-        sb.AppendLine(toConsolidate);
-
-        var options = new ChatOptions
+        var workingMemoryContent = ReadWorkingMemory() ?? "";
+        if (!string.IsNullOrWhiteSpace(workingMemoryContent))
         {
-            Instructions = _consolidatorPrompt,
-            Tools = _tools
-        };
-
-        var agent = _client.AsBuilder().UseFunctionInvocation().BuildAIAgent(new ChatClientAgentOptions
-        {
-            ChatOptions = options
-        });
-
-        await RunAgentStreamingAsync(agent,
-            new ChatMessage(ChatRole.User, sb.ToString()),
-            "Consolidator", cancellationToken);
-
-        // 无论巩固是否成功，都裁剪近期记忆（移除已巩固的部分）
-        await File.WriteAllTextAsync(_recentMemoryPath, toRetain, cancellationToken);
-
-        AppLogger.Log($"[Archive] 近期记忆裁剪完成（保留{toRetain.Length}字）");
-    }
-
-    /// <summary>按 ### 标题分段。</summary>
-    private static List<string> SplitSections(string text)
-    {
-        var sections = new List<string>();
-        var lines = text.Split('\n');
-        var current = new StringBuilder();
-
-        foreach (var line in lines)
-        {
-            if (line.StartsWith("### ") && current.Length > 0)
-            {
-                sections.Add(current.ToString());
-                current.Clear();
-            }
-            current.AppendLine(line);
+            var workingMemoryMessages = JsonSerializer.Deserialize<List<ChatMessage>>(workingMemoryContent);
+            if (workingMemoryMessages != null && workingMemoryMessages.Count > 0)
+                messages.AddRange(workingMemoryMessages);
         }
 
-        if (current.Length > 0)
-            sections.Add(current.ToString());
+        if (messages.Count == 0)
+            return;
 
-        return sections;
+        var primaryMemoryContent = ReadPrimaryMemory() ?? "";
+        if (!string.IsNullOrWhiteSpace(primaryMemoryContent))
+        {
+            messages.Add(new ChatMessage(ChatRole.User, "查询核心记忆"));
+            MemoryPipelineChatReducer.InjectFakeReadFile(messages, _primaryMemoryPath, primaryMemoryContent, AutoSummaryKey);
+        }
+
+        var recentMemoryContent = ReadRecentMemory() ?? "";
+        if (!string.IsNullOrWhiteSpace(recentMemoryContent))
+        {
+            messages.Add(new ChatMessage(ChatRole.User, "查询记忆快照"));
+            MemoryPipelineChatReducer.InjectFakeReadFile(messages, _recentMemoryPath, recentMemoryContent, AutoSummaryKey);
+        }
+
+        var ret = await _client.AsAIAgent(_consolidatorPrompt).RunAsync([.. messages, new ChatMessage(ChatRole.User, "根据以上对话历史，生成完成的核心记忆。")], cancellationToken: cancellationToken);
+        if (!string.IsNullOrWhiteSpace(ret.Text))
+        {
+            File.WriteAllText(_primaryMemoryPath, ret.Text);
+        }
     }
 
     #endregion
 
     #region 工具方法
-
-    private static async Task RunAgentStreamingAsync(
-        ChatClientAgent agent, ChatMessage input, string logPrefix, CancellationToken cancellationToken)
-    {
-        var session = await agent.CreateSessionAsync();
-
-        await foreach (var update in agent.RunStreamingAsync([input], session).WithCancellation(cancellationToken))
-        {
-            foreach (var content in update.Contents)
-            {
-                switch (content)
-                {
-                    case FunctionCallContent call:
-                        AppLogger.SetStatus($"[{logPrefix}]调用工具: {call.Name}");
-                        AppLogger.Log($"[{logPrefix}]调用工具: {call.Name}");
-                        break;
-                }
-            }
-        }
-    }
 
     private static string? ReadFile(string? path)
     {
