@@ -2,7 +2,6 @@
 // Co-Authors: Claude Sonnet 4.6 <claude@anthropic.com>
 
 using sharpclaw.Abstractions;
-using System.Text;
 using System.Threading.Channels;
 
 namespace sharpclaw.Channels.Cli;
@@ -18,27 +17,6 @@ public sealed class CliChatIO : IChatIO
     private readonly Channel<string> _inputChannel = Channel.CreateUnbounded<string>();
     private readonly Thread _inputThread;
     private static readonly bool SupportsColor = !Console.IsOutputRedirected;
-    private static readonly bool SupportsEmoji = DetectEmojiSupport();
-
-    private static bool DetectEmojiSupport()
-    {
-        if (Console.IsOutputRedirected) return false;
-        // Windows Terminal
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WT_SESSION"))) return true;
-        // VS Code 集成终端
-        if (Environment.GetEnvironmentVariable("TERM_PROGRAM") == "vscode") return true;
-        // ConEmu / Cmder
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ConEmuPID"))) return true;
-        // xterm 兼容终端（Linux/macOS）
-        var term = Environment.GetEnvironmentVariable("TERM") ?? "";
-        if (term.StartsWith("xterm", StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
-    }
-
-    /// <summary>
-    /// 当终端支持 emoji 时返回 <paramref name="emoji"/>，否则返回 <paramref name="fallback"/>。
-    /// </summary>
-    private static string E(string emoji, string fallback = "") => SupportsEmoji ? emoji : fallback;
 
     private static void SetColor(ConsoleColor color)
     {
@@ -52,10 +30,6 @@ public sealed class CliChatIO : IChatIO
 
     public CliChatIO()
     {
-        // 确保 emoji 及 Unicode 字符正确输入输出
-        Console.OutputEncoding = Encoding.UTF8;
-        Console.InputEncoding = Encoding.UTF8;
-
         // 后台线程持续读取 Console 输入，以便支持 CancellationToken
         _inputThread = new Thread(ReadInputLoop) { IsBackground = true };
         _inputThread.Start();
@@ -84,7 +58,7 @@ public sealed class CliChatIO : IChatIO
     {
         ResetColor();
         SetColor(ConsoleColor.Cyan);
-        Console.Write($"{E("💬 ")}> ");
+        Console.Write("> ");
         ResetColor();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, _stopCts.Token);
@@ -104,11 +78,11 @@ public sealed class CliChatIO : IChatIO
         if (trimmed is "/help")
         {
             SetColor(ConsoleColor.DarkGray);
-            Console.WriteLine($"""
-                {E("📋 ")}内置指令：
-                  /help    {E("❓")}显示此帮助信息
-                  /exit    {E("👋")}退出程序
-                  /quit    {E("👋")}退出程序
+            Console.WriteLine("""
+                内置指令：
+                  /help    显示此帮助信息
+                  /exit    退出程序
+                  /quit    退出程序
                 """);
             ResetColor();
             return Task.FromResult(CommandResult.Handled);
@@ -127,7 +101,7 @@ public sealed class CliChatIO : IChatIO
     public void BeginAiResponse()
     {
         SetColor(ConsoleColor.Green);
-        Console.Write($"\n{E("🤖 ")}AI: ");
+        Console.Write("\nAI: ");
     }
 
     /// <inheritdoc/>
@@ -146,7 +120,7 @@ public sealed class CliChatIO : IChatIO
     public void ShowRunning()
     {
         SetColor(ConsoleColor.DarkYellow);
-        Console.Write($"\n{E("💭 ")}思考中...");
+        Console.Write("\n思考中...");
         ResetColor();
     }
 
