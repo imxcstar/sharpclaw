@@ -6,15 +6,21 @@ using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
 var command = args.Length > 0 ? args[0].ToLowerInvariant() : "";
-#if DEBUG
-Console.WriteLine($"[Debug] 启动参数: {string.Join(' ', args)} ");
-if (command.Length == 0) {
+
+#if DEBUG 
+// 调试模式下如果没有提供命令参数，默认进入 cli 模式，方便调试和开发。
+// 生产环境下则要求明确指定命令，避免误操作，兼容以往无参退出体验。
+// 如果作为Fallback使用，建议在生产环境中也生效，默认命令为 cli，以保持一致的用户体验。
+if (command.Length == 0)
+{
     Console.WriteLine("[Debug] 未提供命令参数，默认进入cli。");
     command = "cli";
 }
+else 
+    Console.WriteLine($"[Debug] 启动参数: {string.Join(' ', args)} ");
 #endif
 
-switch (command)
+    switch (command)
 {
     case "web":
         KeyStore.PasswordPrompt = ConsolePasswordPrompt;

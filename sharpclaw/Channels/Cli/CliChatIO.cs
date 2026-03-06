@@ -103,7 +103,7 @@ public sealed class CliChatIO : IChatIO
     public void ShowRunning()
     {
         // CLI 模式不显示 spinner，AI 回复时直接开始输出
-        BeginAiResponse();
+        Console.Write("\n思考中...");
     }
 
     /// <inheritdoc/>
