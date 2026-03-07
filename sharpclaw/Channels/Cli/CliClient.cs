@@ -1,14 +1,12 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Channels;
 
 namespace sharpclaw.Channels.Cli;
 
 /// <summary>
-/// CLI 的 WebSocket 客户端模式。
-/// 连接到 Sharpclaw Web 宿主的 /ws 端点，将终端 I/O 桥接到 WebSocket 通信。
-/// 保留动画、颜色输出等终端 UI 逻辑。
+/// CLI WebSocket 客户端。连接到 Sharpclaw Web 宿主的 /ws 端点。
+/// 协议参考: docs/WEBSOCKET_PROTOCOL.md
 /// </summary>
 public sealed class CliClient : IDisposable
 {
@@ -20,28 +18,15 @@ public sealed class CliClient : IDisposable
     private CancellationTokenSource? _animationCts;
     private Task? _animationTask;
 
-    /// <summary>当前是否处于文本输出模式（动画暂停）。</summary>
     private bool _inTextMode;
-
-    /// <summary>本轮是否已经输出过 AI 前缀。</summary>
     private bool _hasOutputPrefix;
-
-    /// <summary>当前状态文本。</summary>
     private volatile string? _status;
-
-    /// <summary>是否正在接受用户输入。</summary>
     private volatile bool _acceptingInput;
 
     private static readonly bool SupportsColor = !Console.IsOutputRedirected;
 
-    public CliClient(string serverUrl)
-    {
-        _serverUrl = serverUrl;
-    }
+    public CliClient(string serverUrl) { _serverUrl = serverUrl; }
 
-    /// <summary>
-    /// 运行 CLI 客户端：连接到服务端，启动输入循环和接收循环。
-    /// </summary>
     public async Task RunAsync()
     {
         Console.OutputEncoding = Encoding.UTF8;
@@ -58,57 +43,39 @@ public sealed class CliClient : IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"[Cli] 连接失败: {ex.Message}");
-            Console.WriteLine("[Cli] 请确保 Sharpclaw Web 服务正在运行（sharpclaw 或 sharpclaw web）");
+            Console.WriteLine("[Cli] 请确保 Sharpclaw Web 服务正在运行（sharpclaw web）");
             return;
         }
 
-        // 启动接收循环
         var receiveTask = Task.Run(ReceiveLoopAsync);
-
-        // 输入循环（在主线程/前台线程）
         await InputLoopAsync();
-
-        // 等待接收循环结束
         try { await receiveTask; } catch { }
 
-        // 清理
         StopAnimation();
         if (_ws.State == WebSocketState.Open)
-        {
-            try
-            {
-                await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
-            }
-            catch { }
-        }
+            try { await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { }
 
         Console.WriteLine("\n[Cli] 已退出。");
     }
 
+    // ─────────────────────────────────────────────────
+    // 输入循环
+    // ─────────────────────────────────────────────────
+
     private async Task InputLoopAsync()
     {
-        if (Console.IsInputRedirected)
-        {
-            await InputLoopRedirectedAsync();
-            return;
-        }
+        if (Console.IsInputRedirected) { await InputLoopRedirectedAsync(); return; }
 
         var sb = new StringBuilder();
         try
         {
             while (!_stopCts.IsCancellationRequested && _ws?.State == WebSocketState.Open)
             {
-                if (!Console.KeyAvailable)
-                {
-                    await Task.Delay(20);
-                    continue;
-                }
-
+                if (!Console.KeyAvailable) { await Task.Delay(20); continue; }
                 var key = Console.ReadKey(true);
 
                 if (!_acceptingInput)
                 {
-                    // AI 运行中：只响应 ESC 发送取消
                     if (key.Key == ConsoleKey.Escape)
                         await SendAsync(new { type = "cancel" });
                     continue;
@@ -123,13 +90,12 @@ public sealed class CliClient : IDisposable
 
                         if (text is "/exit" or "/quit")
                         {
+                            await SendAsync(new { type = "input", text });
                             _stopCts.Cancel();
                             return;
                         }
 
-                        if (string.IsNullOrWhiteSpace(text))
-                            break;
-
+                        if (string.IsNullOrWhiteSpace(text)) break;
                         await SendAsync(new { type = "input", text });
                         break;
 
@@ -138,33 +104,18 @@ public sealed class CliClient : IDisposable
                         {
                             var removed = sb[sb.Length - 1];
                             sb.Remove(sb.Length - 1, 1);
-                            if (IsWideChar(removed))
-                                Console.Write("\b\b  \b\b");
-                            else
-                                Console.Write("\b \b");
+                            Console.Write(IsWideChar(removed) ? "\b\b  \b\b" : "\b \b");
                         }
                         break;
 
                     case ConsoleKey.Escape:
-                        if (_acceptingInput)
-                        {
-                            for (int j = 0; j < sb.Length; j++)
-                            {
-                                if (IsWideChar(sb[j]))
-                                    Console.Write("\b\b  \b\b");
-                                else
-                                    Console.Write("\b \b");
-                            }
-                            sb.Clear();
-                        }
+                        for (int j = 0; j < sb.Length; j++)
+                            Console.Write(IsWideChar(sb[j]) ? "\b\b  \b\b" : "\b \b");
+                        sb.Clear();
                         break;
 
                     default:
-                        if (key.KeyChar >= ' ')
-                        {
-                            sb.Append(key.KeyChar);
-                            Console.Write(key.KeyChar);
-                        }
+                        if (key.KeyChar >= ' ') { sb.Append(key.KeyChar); Console.Write(key.KeyChar); }
                         break;
                 }
             }
@@ -180,21 +131,18 @@ public sealed class CliClient : IDisposable
             while (!_stopCts.IsCancellationRequested)
             {
                 var line = Console.ReadLine();
-                if (line is null)
-                    break;
-
-                if (line is "/exit" or "/quit")
-                {
-                    _stopCts.Cancel();
-                    return;
-                }
-
+                if (line is null) break;
+                if (line is "/exit" or "/quit") { _stopCts.Cancel(); return; }
                 if (!string.IsNullOrWhiteSpace(line))
                     await SendAsync(new { type = "input", text = line });
             }
         }
         catch { }
     }
+
+    // ─────────────────────────────────────────────────
+    // 接收循环 & 消息处理
+    // ─────────────────────────────────────────────────
 
     private async Task ReceiveLoopAsync()
     {
@@ -222,10 +170,7 @@ public sealed class CliClient : IDisposable
         }
         catch (OperationCanceledException) { }
         catch (WebSocketException) { }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"\n[Cli] 接收异常: {ex.Message}");
-        }
+        catch (Exception ex) { Console.WriteLine($"\n[Cli] 接收异常: {ex.Message}"); }
     }
 
     private void HandleServerMessage(string json)
@@ -237,38 +182,95 @@ public sealed class CliClient : IDisposable
 
             switch (type)
             {
-                case "chat":
-                    var chatText = doc.RootElement.GetProperty("text").GetString() ?? "";
-                    AppendChat(chatText);
+                case "aiChunk":
+                    AppendChat(doc.RootElement.GetProperty("text").GetString() ?? "");
                     break;
 
-                case "chatLine":
-                    var lineText = doc.RootElement.GetProperty("text").GetString() ?? "";
-                    // 用户输入回显（不需要在 CLI 客户端再显示，因为用户已经在本地看到了输入）
+                case "echo":
+                    // 用户输入回显 — CLI 本地已显示，跳过
                     break;
 
-                case "state":
-                    var state = doc.RootElement.GetProperty("state").GetString();
-                    if (state == "running")
-                        ShowRunning();
-                    else if (state == "input")
-                        ShowInput();
+                case "aiStart":
+                    BeginAiResponse();
+                    break;
+
+                case "aiEnd":
+                    // AI 回复结束，不需要额外处理
+                    break;
+
+                case "running":
+                    ShowRunning();
+                    break;
+
+                case "inputReady":
+                    ShowInput();
                     break;
 
                 case "log":
-                    // CLI 客户端不显示日志，避免干扰动画和对话
+                    // CLI 不显示日志
                     break;
 
                 case "status":
-                    var statusVal = doc.RootElement.GetProperty("text").GetString() ?? "";
-                    UpdateStatus(statusVal);
+                    UpdateStatus(doc.RootElement.GetProperty("text").GetString() ?? "");
+                    break;
+
+                case "commandResult":
+                    HandleCommandResult(doc.RootElement);
+                    break;
+
+                case "error":
+                    lock (_consoleLock) { Console.WriteLine($"\n[Error] {doc.RootElement.GetProperty("text").GetString()}"); }
                     break;
             }
         }
         catch (JsonException) { }
     }
 
-    #region 终端 UI
+    private void HandleCommandResult(JsonElement root)
+    {
+        var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+
+        if (root.TryGetProperty("error", out var errEl) && errEl.ValueKind == JsonValueKind.String)
+        {
+            lock (_consoleLock) { Console.WriteLine($"\n[{name}] 错误: {errEl.GetString()}"); }
+            return;
+        }
+
+        if (root.TryGetProperty("text", out var textEl) && textEl.ValueKind == JsonValueKind.String)
+        {
+            lock (_consoleLock) { Console.WriteLine($"\n{textEl.GetString()}"); }
+            return;
+        }
+
+        if (root.TryGetProperty("data", out var dataEl))
+        {
+            lock (_consoleLock)
+            {
+                var opts = new JsonSerializerOptions { WriteIndented = true };
+                Console.WriteLine($"\n[{name}] {dataEl.GetRawText()}");
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────
+    // 终端 UI
+    // ─────────────────────────────────────────────────
+
+    private void BeginAiResponse()
+    {
+        lock (_consoleLock)
+        {
+            if (!_inTextMode)
+            {
+                _inTextMode = true;
+                SetColor(ConsoleColor.Green);
+                Console.Write("\r🤖 AI: ");
+                EraseToEnd();
+                ResetColor();
+                _hasOutputPrefix = true;
+            }
+        }
+    }
 
     private void ShowRunning()
     {
@@ -290,12 +292,9 @@ public sealed class CliClient : IDisposable
         {
             string[] frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             int i = 1;
-
             while (!token.IsCancellationRequested)
             {
-                try { await Task.Delay(80, token); }
-                catch (TaskCanceledException) { break; }
-
+                try { await Task.Delay(80, token); } catch (TaskCanceledException) { break; }
                 lock (_consoleLock)
                 {
                     if (_inTextMode) continue;
@@ -308,7 +307,6 @@ public sealed class CliClient : IDisposable
     private void ShowInput()
     {
         StopAnimation();
-
         lock (_consoleLock)
         {
             _inTextMode = false;
@@ -329,7 +327,6 @@ public sealed class CliClient : IDisposable
         lock (_consoleLock)
         {
             _status = status;
-
             if (_inTextMode)
             {
                 Console.WriteLine();
@@ -342,13 +339,11 @@ public sealed class CliClient : IDisposable
     private void AppendChat(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
-
         lock (_consoleLock)
         {
             if (!_inTextMode)
             {
                 _inTextMode = true;
-
                 if (!_hasOutputPrefix)
                 {
                     SetColor(ConsoleColor.Green);
@@ -363,11 +358,6 @@ public sealed class CliClient : IDisposable
                     EraseToEnd();
                 }
             }
-
-            // 去掉服务端发来的 "AI: " 前缀
-            if (!_hasOutputPrefix && text.StartsWith("AI: "))
-                text = text[4..];
-
             Console.Write(text);
             Console.Out.Flush();
         }
@@ -375,9 +365,7 @@ public sealed class CliClient : IDisposable
 
     private void StopAnimation()
     {
-        var cts = _animationCts;
-        if (cts == null) return;
-
+        var cts = _animationCts; if (cts == null) return;
         cts.Cancel();
         try { _animationTask?.Wait(); } catch { }
         cts.Dispose();
@@ -388,53 +376,27 @@ public sealed class CliClient : IDisposable
     private void RenderSpinnerLine(string frame)
     {
         SetColor(ConsoleColor.DarkYellow);
-        var status = _status;
-        if (string.IsNullOrEmpty(status))
-            Console.Write($"\r🤖 思考中 {frame} (Esc 取消)");
-        else
-            Console.Write($"\r🤖 思考中 {frame} ({status}) (Esc 取消)");
+        var s = _status;
+        Console.Write(string.IsNullOrEmpty(s) ? $"\r🤖 思考中 {frame} (Esc 取消)" : $"\r🤖 思考中 {frame} ({s}) (Esc 取消)");
         EraseToEnd();
         Console.Out.Flush();
         ResetColor();
     }
 
     private static bool IsWideChar(char c) =>
-        (c >= 0x1100 && c <= 0x115F) ||
-        (c >= 0x2E80 && c <= 0xA4CF && c != 0x303F) ||
-        (c >= 0xAC00 && c <= 0xD7A3) ||
-        (c >= 0xF900 && c <= 0xFAFF) ||
-        (c >= 0xFE30 && c <= 0xFE6F) ||
-        (c >= 0xFF01 && c <= 0xFF60) ||
-        (c >= 0xFFE0 && c <= 0xFFE6);
+        (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF && c != 0x303F) ||
+        (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
+        (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF01 && c <= 0xFF60) || (c >= 0xFFE0 && c <= 0xFFE6);
 
-    private static void SetColor(ConsoleColor color)
-    {
-        if (SupportsColor) Console.ForegroundColor = color;
-    }
-
-    private static void ResetColor()
-    {
-        if (SupportsColor) Console.ResetColor();
-    }
-
-    private static void EraseToEnd()
-    {
-        if (SupportsColor) Console.Write("\x1b[K");
-    }
-
-    #endregion
+    private static void SetColor(ConsoleColor c) { if (SupportsColor) Console.ForegroundColor = c; }
+    private static void ResetColor() { if (SupportsColor) Console.ResetColor(); }
+    private static void EraseToEnd() { if (SupportsColor) Console.Write("\x1b[K"); }
 
     private async Task SendAsync(object message)
     {
         if (_ws?.State != WebSocketState.Open) return;
-
-        var json = JsonSerializer.Serialize(message);
-        var bytes = Encoding.UTF8.GetBytes(json);
-        try
-        {
-            await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, _stopCts.Token);
-        }
-        catch { }
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
+        try { await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, _stopCts.Token); } catch { }
     }
 
     public void Dispose()

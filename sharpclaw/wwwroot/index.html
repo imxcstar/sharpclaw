@@ -22,7 +22,10 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
 .header-status::before { content: ''; }
 .header-status:not(:empty)::before { content: '⟳ '; display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.conn-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-left: auto; align-self: center; }
+.header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.btn-config { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; color: var(--text-dim); cursor: pointer; font-size: 13px; }
+.btn-config:hover { color: var(--text); border-color: var(--accent); }
+.conn-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
 .conn-status.connected { background: #9ece6a33; color: var(--green); }
 .conn-status.disconnected { background: #f7768e33; color: var(--red); }
 
@@ -36,7 +39,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
 .message { margin-bottom: 16px; line-height: 1.6; }
 .message.user { color: var(--accent); }
 .message.user::before { content: '> '; }
-.message.ai .content { }
 .message.ai .content p { margin-bottom: 8px; }
 .message.ai .content pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; margin-bottom: 8px; }
 .message.ai .content code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
@@ -45,6 +47,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
 .message.ai .content table { border-collapse: collapse; margin-bottom: 8px; }
 .message.ai .content th, .message.ai .content td { border: 1px solid var(--border); padding: 6px 10px; }
 .message.cancelled { color: var(--text-dim); font-style: italic; }
+.message.cmd { color: var(--text-dim); font-family: monospace; font-size: 13px; white-space: pre-wrap; margin-bottom: 8px; }
 
 /* 输入区 */
 .input-area { padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
@@ -67,6 +70,31 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
 .log-area::-webkit-scrollbar { width: 6px; }
 .log-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 .log-content { padding: 8px 16px; font-family: monospace; font-size: 12px; color: var(--text-dim); white-space: pre-wrap; word-break: break-all; }
+
+/* 配置面板 */
+.config-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; justify-content: center; align-items: center; }
+.config-overlay.open { display: flex; }
+.config-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: 600px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column; }
+.config-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.config-header h2 { font-size: 16px; }
+.config-close { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 18px; }
+.config-close:hover { color: var(--text); }
+.config-body { flex: 1; overflow-y: auto; padding: 16px; }
+.config-body::-webkit-scrollbar { width: 6px; }
+.config-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.config-section { margin-bottom: 16px; }
+.config-section h3 { font-size: 13px; color: var(--accent); margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.config-field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.config-field label { min-width: 120px; font-size: 13px; color: var(--text-dim); }
+.config-field input, .config-field select { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; color: var(--text); font-size: 13px; outline: none; }
+.config-field input:focus, .config-field select:focus { border-color: var(--accent); }
+.config-field input[type="checkbox"] { flex: none; width: 16px; height: 16px; }
+.config-footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.config-footer .btn { font-size: 13px; }
+.btn-save { background: var(--green); color: var(--bg); }
+.btn-close { background: var(--border); color: var(--text); }
+.config-toast { position: fixed; bottom: 20px; right: 20px; background: var(--green); color: var(--bg); padding: 8px 16px; border-radius: 6px; font-size: 13px; z-index: 200; display: none; }
+.config-toast.error { background: var(--red); color: #fff; }
 </style>
 </head>
 <body>
@@ -76,7 +104,10 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
         <h1>Sharpclaw</h1>
         <span id="statusText" class="header-status"></span>
     </div>
-    <span id="connStatus" class="conn-status disconnected">未连接</span>
+    <div class="header-right">
+        <button id="btnConfig" class="btn-config" title="配置">⚙ 设置</button>
+        <span id="connStatus" class="conn-status disconnected">未连接</span>
+    </div>
 </div>
 
 <div class="main">
@@ -96,6 +127,24 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
     <div id="logContent" class="log-content"></div>
 </div>
 
+<!-- 配置面板 -->
+<div id="configOverlay" class="config-overlay">
+    <div class="config-panel">
+        <div class="config-header">
+            <h2>⚙ 配置</h2>
+            <button id="configClose" class="config-close">✕</button>
+        </div>
+        <div id="configBody" class="config-body">
+            <div style="color:var(--text-dim);text-align:center;padding:24px">加载中...</div>
+        </div>
+        <div class="config-footer">
+            <button id="configSave" class="btn btn-save">保存</button>
+            <button id="configCancel" class="btn btn-close">取消</button>
+        </div>
+    </div>
+</div>
+<div id="configToast" class="config-toast"></div>
+
 <script>
 const chatArea = document.getElementById('chatArea');
 const inputField = document.getElementById('inputField');
@@ -106,89 +155,128 @@ const statusText = document.getElementById('statusText');
 const logToggle = document.getElementById('logToggle');
 const logArea = document.getElementById('logArea');
 const logContent = document.getElementById('logContent');
+const btnConfig = document.getElementById('btnConfig');
+const configOverlay = document.getElementById('configOverlay');
+const configBody = document.getElementById('configBody');
+const configClose = document.getElementById('configClose');
+const configSave = document.getElementById('configSave');
+const configCancel = document.getElementById('configCancel');
+const configToast = document.getElementById('configToast');
 
 let ws = null;
-let currentAiMsg = null; // 当前正在流式输出的 AI 消息元素
-let currentAiText = '';  // 当前 AI 消息的原始文本
+let currentAiMsg = null;
+let currentAiText = '';
+let currentConfig = null; // 当前加载的配置对象
 
-// marked 配置
 marked.setOptions({ breaks: true, gfm: true });
 
+// ─── WebSocket ───
 function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${proto}//${location.host}/ws`);
-
-    ws.onopen = () => {
-        connStatus.textContent = '已连接';
-        connStatus.className = 'conn-status connected';
-    };
-
-    ws.onclose = () => {
-        connStatus.textContent = '未连接';
-        connStatus.className = 'conn-status disconnected';
-        statusText.textContent = '';
-        setInputState(false);
-        // 3 秒后重连
-        setTimeout(connect, 3000);
-    };
-
+    ws.onopen = () => { connStatus.textContent = '已连接'; connStatus.className = 'conn-status connected'; };
+    ws.onclose = () => { connStatus.textContent = '未连接'; connStatus.className = 'conn-status disconnected'; statusText.textContent = ''; setInputState(false); setTimeout(connect, 3000); };
     ws.onerror = () => {};
-
-    ws.onmessage = (e) => {
-        try {
-            const msg = JSON.parse(e.data);
-            handleMessage(msg);
-        } catch {}
-    };
+    ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch {} };
 }
 
+function sendWs(obj) { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+
+// ─── 消息处理 ───
 function handleMessage(msg) {
     switch (msg.type) {
-        case 'chat':
+        case 'aiChunk':
             if (!currentAiMsg) startAiMessage();
             currentAiText += msg.text;
             renderCurrentAi();
             scrollToBottom();
             break;
 
-        case 'chatLine':
-            // 完整一行（如用户输入回显）
+        case 'echo': {
             const div = document.createElement('div');
             div.className = 'message user';
-            div.textContent = msg.text.replace(/^> /, '').replace(/\n$/, '');
+            div.textContent = (msg.text || '').replace(/^> /, '').replace(/\n$/, '');
             chatArea.appendChild(div);
             scrollToBottom();
             break;
+        }
 
-        case 'state':
-            if (msg.state === 'running') {
-                setInputState(false);
-                currentAiMsg = null;
-                currentAiText = '';
-            } else if (msg.state === 'input') {
-                // 结束当前 AI 消息
-                currentAiMsg = null;
-                currentAiText = '';
-                setInputState(true);
-            }
+        case 'aiStart':
+            currentAiMsg = null;
+            currentAiText = '';
+            startAiMessage();
+            break;
+
+        case 'aiEnd':
+            currentAiMsg = null;
+            currentAiText = '';
+            break;
+
+        case 'running':
+            setInputState(false);
+            break;
+
+        case 'inputReady':
+            currentAiMsg = null;
+            currentAiText = '';
+            setInputState(true);
             break;
 
         case 'log':
-            appendLog(msg.message);
+            appendLog(msg.text);
             break;
 
         case 'status':
             statusText.textContent = msg.text;
             break;
+
+        case 'commandResult':
+            handleCommandResult(msg);
+            break;
+
+        case 'error':
+            appendLog('[Error] ' + msg.text);
+            break;
     }
 }
 
+function handleCommandResult(msg) {
+    // 配置结果特殊处理
+    if (msg.name === 'getConfig' && configOverlay.classList.contains('open')) {
+        if (msg.error) { showToast(msg.error, true); return; }
+        currentConfig = msg.data;
+        renderConfigForm(msg.data);
+        return;
+    }
+    if (msg.name === 'setConfig') {
+        if (msg.error) showToast('保存失败: ' + msg.error, true);
+        else { showToast('配置已保存，重启后生效'); closeConfig(); }
+        return;
+    }
+    if (msg.name === 'configSet') {
+        if (msg.error) showToast(msg.error, true);
+        else if (msg.text) showToast(msg.text);
+        return;
+    }
+
+    // 通用命令结果 → 显示为文本
+    if (msg.error) { appendCmdResult('[错误] ' + msg.error); return; }
+    if (msg.text) { appendCmdResult(msg.text); return; }
+    if (msg.data) appendCmdResult(JSON.stringify(msg.data, null, 2));
+}
+
+function appendCmdResult(text) {
+    const div = document.createElement('div');
+    div.className = 'message cmd';
+    div.textContent = text;
+    chatArea.appendChild(div);
+    scrollToBottom();
+}
+
+// ─── 对话 UI ───
 function startAiMessage() {
     currentAiMsg = document.createElement('div');
     currentAiMsg.className = 'message ai';
-    const prefix = document.createElement('span');
-    prefix.style.color = 'var(--green)';
-    prefix.style.fontWeight = '600';
     const content = document.createElement('div');
     content.className = 'content';
     currentAiMsg.appendChild(content);
@@ -197,11 +285,7 @@ function startAiMessage() {
 
 function renderCurrentAi() {
     if (!currentAiMsg) return;
-    const content = currentAiMsg.querySelector('.content');
-    // 去掉开头的 "AI: " 前缀
-    let text = currentAiText;
-    if (text.startsWith('AI: ')) text = text.substring(4);
-    content.innerHTML = marked.parse(text);
+    currentAiMsg.querySelector('.content').innerHTML = marked.parse(currentAiText);
 }
 
 function setInputState(enabled) {
@@ -209,49 +293,142 @@ function setInputState(enabled) {
     btnSend.disabled = !enabled;
     btnCancel.style.display = enabled ? 'none' : 'inline-block';
     btnSend.style.display = enabled ? 'inline-block' : 'none';
-    if (enabled) {
-        inputField.focus();
-        statusText.textContent = '';
-    }
+    if (enabled) { inputField.focus(); statusText.textContent = ''; }
 }
 
 function sendMessage() {
     const text = inputField.value.trim();
-    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'input', text }));
+    if (!text) return;
+    sendWs({ type: 'input', text });
     inputField.value = '';
 }
 
-function cancelAi() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'cancel' }));
-}
+function cancelAi() { sendWs({ type: 'cancel' }); }
 
 function appendLog(message) {
     logContent.textContent += (logContent.textContent ? '\n' : '') + message;
     logArea.scrollTop = logArea.scrollHeight;
 }
 
-function scrollToBottom() {
-    chatArea.scrollTop = chatArea.scrollHeight;
+function scrollToBottom() { chatArea.scrollTop = chatArea.scrollHeight; }
+
+// ─── 配置面板 ───
+function openConfig() {
+    configOverlay.classList.add('open');
+    configBody.innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:24px">加载中...</div>';
+    currentConfig = null;
+    sendWs({ type: 'command', name: 'getConfig' });
 }
 
-// 事件绑定
+function closeConfig() { configOverlay.classList.remove('open'); }
+
+function renderConfigForm(cfg) {
+    if (!cfg) { configBody.innerHTML = '<div style="color:var(--red);padding:16px">无配置数据</div>'; return; }
+
+    let html = '';
+
+    // 默认配置
+    const def = cfg.default || {};
+    html += `<div class="config-section"><h3>默认配置</h3>
+        ${field('default.provider', 'AI 供应商', def.provider || 'anthropic', 'select', ['anthropic','openai','gemini'])}
+        ${field('default.endpoint', '端点', def.endpoint || '')}
+        ${field('default.apiKey', 'API Key', def.apiKey || '', 'password')}
+        ${field('default.model', '模型', def.model || '')}
+    </div>`;
+
+    // 智能体
+    const agents = cfg.agents || {};
+    for (const [name, agent] of Object.entries(agents)) {
+        const a = agent || {};
+        html += `<div class="config-section"><h3>智能体: ${name}</h3>
+            ${checkbox(`agents.${name}.enabled`, '启用', a.enabled !== false)}
+            ${field(`agents.${name}.provider`, '供应商(留空继承)', a.provider || '')}
+            ${field(`agents.${name}.model`, '模型(留空继承)', a.model || '')}
+        </div>`;
+    }
+
+    // 记忆
+    const mem = cfg.memory || {};
+    html += `<div class="config-section"><h3>向量记忆</h3>
+        ${checkbox('memory.enabled', '启用', !!mem.enabled)}
+        ${field('memory.embeddingEndpoint', 'Embedding 端点', mem.embeddingEndpoint || '')}
+        ${field('memory.embeddingModel', 'Embedding 模型', mem.embeddingModel || '')}
+        ${checkbox('memory.rerankEnabled', '启用重排序', !!mem.rerankEnabled)}
+        ${field('memory.rerankEndpoint', 'Rerank 端点', mem.rerankEndpoint || '')}
+        ${field('memory.rerankModel', 'Rerank 模型', mem.rerankModel || '')}
+    </div>`;
+
+    // 渠道
+    const ch = cfg.channels || {};
+    const web = ch.web || {};
+    const qq = ch.qqBot || {};
+    html += `<div class="config-section"><h3>Web 服务</h3>
+        ${field('channels.web.listenAddress', '监听地址', web.listenAddress || 'localhost')}
+        ${field('channels.web.port', '端口', web.port || 5000, 'number')}
+    </div>`;
+    html += `<div class="config-section"><h3>QQ Bot</h3>
+        ${checkbox('channels.qqBot.enabled', '启用', !!qq.enabled)}
+        ${field('channels.qqBot.appId', 'App ID', qq.appId || '')}
+        ${field('channels.qqBot.clientSecret', 'Secret', qq.clientSecret || '', 'password')}
+        ${checkbox('channels.qqBot.sandbox', '沙箱模式', !!qq.sandbox)}
+    </div>`;
+
+    configBody.innerHTML = html;
+}
+
+function field(path, label, value, type = 'text', options) {
+    if (type === 'select') {
+        const opts = (options||[]).map(o => `<option value="${o}"${o===value?' selected':''}>${o}</option>`).join('');
+        return `<div class="config-field"><label>${label}</label><select data-path="${path}">${opts}</select></div>`;
+    }
+    if (type === 'number')
+        return `<div class="config-field"><label>${label}</label><input type="number" data-path="${path}" value="${value}"></div>`;
+    if (type === 'password')
+        return `<div class="config-field"><label>${label}</label><input type="password" data-path="${path}" value="${value}"></div>`;
+    return `<div class="config-field"><label>${label}</label><input type="text" data-path="${path}" value="${value}"></div>`;
+}
+
+function checkbox(path, label, checked) {
+    return `<div class="config-field"><label>${label}</label><input type="checkbox" data-path="${path}"${checked?' checked':''}></div>`;
+}
+
+function saveConfig() {
+    if (!currentConfig) return;
+    // 从表单读取值并写入 config 对象
+    configBody.querySelectorAll('[data-path]').forEach(el => {
+        const path = el.dataset.path.split('.');
+        let obj = currentConfig;
+        for (let i = 0; i < path.length - 1; i++) {
+            if (!obj[path[i]]) obj[path[i]] = {};
+            obj = obj[path[i]];
+        }
+        const key = path[path.length - 1];
+        if (el.type === 'checkbox') obj[key] = el.checked;
+        else if (el.type === 'number') obj[key] = parseInt(el.value) || 0;
+        else obj[key] = el.value;
+    });
+    sendWs({ type: 'command', name: 'setConfig', args: { config: currentConfig } });
+}
+
+function showToast(msg, isError) {
+    configToast.textContent = msg;
+    configToast.className = 'config-toast' + (isError ? ' error' : '');
+    configToast.style.display = 'block';
+    setTimeout(() => { configToast.style.display = 'none'; }, 3000);
+}
+
+// ─── 事件绑定 ───
 btnSend.addEventListener('click', sendMessage);
 btnCancel.addEventListener('click', cancelAi);
-inputField.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
+inputField.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+logToggle.addEventListener('click', () => { logArea.classList.toggle('open'); logToggle.textContent = logArea.classList.contains('open') ? '▼ 日志' : '▶ 日志'; });
+btnConfig.addEventListener('click', openConfig);
+configClose.addEventListener('click', closeConfig);
+configCancel.addEventListener('click', closeConfig);
+configSave.addEventListener('click', saveConfig);
+configOverlay.addEventListener('click', (e) => { if (e.target === configOverlay) closeConfig(); });
 
-logToggle.addEventListener('click', () => {
-    logArea.classList.toggle('open');
-    logToggle.textContent = logArea.classList.contains('open') ? '▼ 日志' : '▶ 日志';
-});
-
-// 初始状态
+// 初始化
 setInputState(false);
 connect();
 </script>

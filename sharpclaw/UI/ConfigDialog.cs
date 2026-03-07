@@ -71,6 +71,12 @@ public sealed class ConfigDialog : Dialog
 
     public bool Saved { get; private set; }
 
+    /// <summary>
+    /// 自定义保存回调。设置后，保存时调用此回调而非直接写入本地文件。
+    /// 用于远程配置编辑场景（TUI WebSocket 客户端模式）。
+    /// </summary>
+    public Action<SharpclawConfig>? SaveAction { get; set; }
+
     public ConfigDialog()
     {
         Title = "Sharpclaw 配置引导";
@@ -454,7 +460,11 @@ public sealed class ConfigDialog : Dialog
             }
         };
 
-        config.Save();
+        if (SaveAction is not null)
+            SaveAction(config);
+        else
+            config.Save();
+
         Saved = true;
         App!.RequestStop();
     }

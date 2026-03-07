@@ -61,6 +61,26 @@ public class SharpclawConfig
         return config;
     }
 
+    /// <summary>
+    /// 从 JSON 字符串反序列化配置（不从文件读取，不解密密钥）。
+    /// 用于远程配置编辑场景。
+    /// </summary>
+    public static SharpclawConfig Deserialize(string json)
+    {
+        return JsonSerializer.Deserialize<SharpclawConfig>(json, JsonOptions)!;
+    }
+
+    /// <summary>
+    /// 将配置序列化为 JsonNode（不加密密钥，不写入文件）。
+    /// 用于通过 WebSocket 发送配置数据。
+    /// </summary>
+    public static JsonNode? SerializeToNode(SharpclawConfig config)
+    {
+        config.Version = CurrentVersion;
+        var json = JsonSerializer.Serialize(config, JsonOptions);
+        return JsonNode.Parse(json);
+    }
+
     public void Save()
     {
         Version = CurrentVersion;

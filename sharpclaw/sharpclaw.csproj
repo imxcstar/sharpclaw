@@ -19,6 +19,9 @@
 		<PackageReference Include="Luolan.QQBot" Version="1.4.0" />
 		<PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc2" />
 		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
+		<PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+		<PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+		<PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
 		<PackageReference Include="Terminal.Gui" Version="2.0.0-develop.5039" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.3" />
 		<PackageReference Include="ToonSharp" Version="1.0.0" />

@@ -328,7 +328,7 @@ public sealed class ChatWindow : Runnable, IChatIO
     /// <summary>
     /// 解析快捷键字符串（如 "Ctrl+Q"、"Esc"、"Ctrl+L"）为 Terminal.Gui Key。
     /// </summary>
-    private static Key? ParseKey(string keyStr)
+    internal static Key? ParseKey(string keyStr)
     {
         if (string.IsNullOrWhiteSpace(keyStr))
             return null;

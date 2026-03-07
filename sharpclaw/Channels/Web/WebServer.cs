@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using sharpclaw.Core;
 using sharpclaw.UI;
 
@@ -18,7 +19,7 @@ public static class WebServer
     /// <summary>
     /// 启动 Web 宿主。bootstrap 由外部提供，支持多客户端 WebSocket 连接。
     /// </summary>
-    public static async Task RunAsync(string[] args, AgentBootstrap.BootstrapResult bootstrap)
+    public static async Task RunAsync(string[] args, AgentBootstrap.BootstrapResult bootstrap, bool silent = false)
     {
         // 端口优先级：命令行参数 > 配置文件 > 默认值
         var address = bootstrap.Config.Channels.Web.ListenAddress;
@@ -30,11 +31,18 @@ public static class WebServer
         if (portIdx >= 0 && portIdx + 1 < args.Length && int.TryParse(args[portIdx + 1], out var p))
             port = p;
 
-        if (bootstrap.MemoryStore is null)
+        if (bootstrap.MemoryStore is null && !silent)
             Console.WriteLine("[Config] 向量记忆已禁用，记忆压缩将使用总结模式");
 
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls($"http://{address}:{port}");
+
+        // silent 模式下完全禁止控制台日志输出
+        if (silent)
+        {
+            builder.Logging.ClearProviders();
+            builder.Logging.SetMinimumLevel(LogLevel.None);
+        }
 
         // 如果 QQBot 配置启用，注册为托管服务
         if (bootstrap.Config.Channels.QQBot.Enabled)
@@ -44,11 +52,11 @@ public static class WebServer
             {
                 builder.Services.AddSingleton(new QQBot.QQBotHostedService(bootstrap));
                 builder.Services.AddHostedService(sp => sp.GetRequiredService<QQBot.QQBotHostedService>());
-                Console.WriteLine("[QQBot] QQ Bot 已注册为托管服务，将随 Web 宿主一同启动");
+                if (!silent) Console.WriteLine("[QQBot] QQ Bot 已注册为托管服务，将随 Web 宿主一同启动");
             }
             else
             {
-                Console.WriteLine("[QQBot] QQ Bot 已启用但 AppId 或 ClientSecret 未配置，跳过注册。");
+                if (!silent) Console.WriteLine("[QQBot] QQ Bot 已启用但 AppId 或 ClientSecret 未配置，跳过注册。");
             }
         }
 

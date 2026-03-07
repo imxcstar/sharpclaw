@@ -16,7 +16,7 @@ public sealed class WebSocketLogger : IAppLogger
 
     public void Log(string message)
     {
-        _sender.Send(new { type = "log", message });
+        _sender.Send(new { type = "log", text = message });
     }
 
     public void SetStatus(string status)
