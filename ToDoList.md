@@ -5,6 +5,8 @@
  - [ ] MainAgent在作为单例在注册在DI中复用，探究运行时热切换不同UI模式的可行性。
  - [ ] 遵循NET最佳实践,DI管控各Services组件生命周期,合理使用Singleton、Scoped、Transient。
     - [X] 引入ORM类库,方便用户持久化对话数据,并且可以在不同会话之间共享数据。
+    - [ ] EF模型和其他Memory冗余，不符合面向对象规范。
+    - [ ] InMemory(内存)可以替换为Ram，用于和Memory(记忆)消除歧义。
     - [ ] 规范日志Logging 按不通用户需求分级输出日志,并且提供日志文件输出功能,方便用户调试和记录对话历史。
     - [ ] 配置Options
  - [ ] 配置后重启才生效(工厂模式下直接注入对应的新IChatClient)
