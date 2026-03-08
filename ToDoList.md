@@ -12,6 +12,7 @@
  - [ ] 配置后重启才生效(工厂模式下直接注入对应的新IChatClient)
  - [ ] 各Agent选择不同IChatClient实现,合理匹配不同Model的能力。
  - [ ] 增加Token计数功能,方便用户了解每次对话的Token使用情况，开关控制是否显示。
+ - [ ] 会话云缓存的支持，避免Token的过渡消耗，现在一次对话可能消耗14wToken。
  - [ ] 增加对话时间，响应耗时，开关控制是否显示。
  - [X] 增加PowerShell Core(pwsh.exe / 7.x)回退PowerShell(powershell.exe / 5.1)的功能
 
