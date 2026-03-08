@@ -1,6 +1,6 @@
 # 待办事项列表
 ---
- - [ ] 项目改名为**SharpClaw**,同时遵循.NET生态中的规范,符合C#命名习惯,同时类比OpenClaw、ZeroClaw、NanoClaw、PicoClaw等项目,让人一看名字就知道是一个Claw的项目。
+ - [ ] 项目改名为**SharpClaw**,同时遵循.NET生态中的规范,符合C#命名习惯,同时类比OpenClaw、ZeroClaw、NanoClaw、PicoClaw、IronClaw等项目,让人一看名字就知道是一个Claw的项目。
  - [ ] slnx加入类库，默认VS IDE支持(现在要Restore Build)，在最新IDE中做到，【0异常 0警告 0消息】的编译状态。
  - [ ] MainAgent在作为单例在注册在DI中复用，探究运行时热切换不同UI模式的可行性。
  - [ ] 遵循NET最佳实践,DI管控各Services组件生命周期,合理使用Singleton、Scoped、Transient。
