@@ -46,20 +46,30 @@ jobs:
       matrix:
         include:
           - rid: win-x64
-            wasmer-url: https://github.com/wasmerio/wasmer/releases/download/v7.1.0/wasmer-windows-amd64.tar.gz
-            wasmer-lib: lib/wasmer.dll
+            wasmtime-url: https://github.com/bytecodealliance/wasmtime/releases/download/v43.0.0/wasmtime-v43.0.0-x86_64-windows-c-api.zip
+            wasmtime-dir: wasmtime-v43.0.0-x86_64-windows-c-api
+            wasmtime-lib: wasmtime.dll
+            archive-ext: zip
           - rid: linux-x64
-            wasmer-url: https://github.com/wasmerio/wasmer/releases/download/v7.1.0/wasmer-linux-amd64.tar.gz
-            wasmer-lib: lib/libwasmer.so
+            wasmtime-url: https://github.com/bytecodealliance/wasmtime/releases/download/v43.0.0/wasmtime-v43.0.0-x86_64-linux-c-api.tar.xz
+            wasmtime-dir: wasmtime-v43.0.0-x86_64-linux-c-api
+            wasmtime-lib: libwasmtime.so
+            archive-ext: tar.xz
           - rid: linux-arm64
-            wasmer-url: https://github.com/wasmerio/wasmer/releases/download/v7.1.0/wasmer-linux-aarch64.tar.gz
-            wasmer-lib: lib/libwasmer.so
+            wasmtime-url: https://github.com/bytecodealliance/wasmtime/releases/download/v43.0.0/wasmtime-v43.0.0-aarch64-linux-c-api.tar.xz
+            wasmtime-dir: wasmtime-v43.0.0-aarch64-linux-c-api
+            wasmtime-lib: libwasmtime.so
+            archive-ext: tar.xz
           - rid: osx-x64
-            wasmer-url: https://github.com/wasmerio/wasmer/releases/download/v7.1.0/wasmer-darwin-amd64.tar.gz
-            wasmer-lib: lib/libwasmer.dylib
+            wasmtime-url: https://github.com/bytecodealliance/wasmtime/releases/download/v43.0.0/wasmtime-v43.0.0-x86_64-macos-c-api.tar.xz
+            wasmtime-dir: wasmtime-v43.0.0-x86_64-macos-c-api
+            wasmtime-lib: libwasmtime.dylib
+            archive-ext: tar.xz
           - rid: osx-arm64
-            wasmer-url: https://github.com/wasmerio/wasmer/releases/download/v7.1.0/wasmer-darwin-arm64.tar.gz
-            wasmer-lib: lib/libwasmer.dylib
+            wasmtime-url: https://github.com/bytecodealliance/wasmtime/releases/download/v43.0.0/wasmtime-v43.0.0-aarch64-macos-c-api.tar.xz
+            wasmtime-dir: wasmtime-v43.0.0-aarch64-macos-c-api
+            wasmtime-lib: libwasmtime.dylib
+            archive-ext: tar.xz
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,18 +86,22 @@ jobs:
           name: rustpython-wasm
           path: rustpython-artifact
 
-      - name: Download Wasmer
+      - name: Download Wasmtime
         run: |
-          curl -fsSL "${{ matrix.wasmer-url }}" -o wasmer.tar.gz
-          mkdir -p wasmer-extracted
-          tar xzf wasmer.tar.gz -C wasmer-extracted
+          if [[ "${{ matrix.archive-ext }}" == "zip" ]]; then
+            curl -fsSL "${{ matrix.wasmtime-url }}" -o wasmtime.zip
+            unzip -q wasmtime.zip
+          else
+            curl -fsSL "${{ matrix.wasmtime-url }}" -o wasmtime.tar.xz
+            tar xJf wasmtime.tar.xz
+          fi
 
       - name: Publish
         run: dotnet publish sharpclaw -c Release -r ${{ matrix.rid }} --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:GenerateDocumentationFile=false -o out/${{ matrix.rid }}
 
       - name: Bundle native dependencies
         run: |
-          cp wasmer-extracted/${{ matrix.wasmer-lib }} out/${{ matrix.rid }}/
+          cp ${{ matrix.wasmtime-dir }}/lib/${{ matrix.wasmtime-lib }} out/${{ matrix.rid }}/
           mkdir -p out/${{ matrix.rid }}/libs
           cp rustpython-artifact/rustpython.wasm out/${{ matrix.rid }}/libs/
 

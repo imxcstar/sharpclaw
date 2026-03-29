@@ -35,11 +35,7 @@
 		<EmbeddedResource Include="wwwroot\index.html" LogicalName="index.html" />
 	</ItemGroup>
 
-	<ItemGroup Condition="Exists('..\libs\wasmer-windows-amd64\lib\wasmer.dll')">
-		<None Include="..\libs\wasmer-windows-amd64\lib\wasmer.dll" Link="wasmer.dll" CopyToOutputDirectory="PreserveNewest" />
-	</ItemGroup>
-
-	<ItemGroup Condition="Exists('..\libs\wasmtime-v43.0.0-x86_64-windows-c-api\lib\wasmtime.dll')">
+	<ItemGroup Condition="'$(Configuration)' == 'Debug' And Exists('..\libs\wasmtime-v43.0.0-x86_64-windows-c-api\lib\wasmtime.dll')">
 		<None Include="..\libs\wasmtime-v43.0.0-x86_64-windows-c-api\lib\wasmtime.dll" Link="wasmtime.dll" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
