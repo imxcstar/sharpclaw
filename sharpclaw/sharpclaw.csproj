@@ -35,4 +35,9 @@
 		<EmbeddedResource Include="wwwroot\index.html" LogicalName="index.html" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Include="..\libs\wasmer-windows-amd64\lib\wasmer.dll" Link="wasmer.dll" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="..\libs\rustpython.wasm" Link="libs\rustpython.wasm" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 </Project>

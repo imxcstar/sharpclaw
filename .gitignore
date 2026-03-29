@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 /sharpclaw/Properties/launchSettings.json
 /.claude
+/libs/wasmer-windows-amd64/include
+/libs/wasmer-windows-amd64/ATTRIBUTIONS
+/libs/wasmer-windows-amd64/LICENSE

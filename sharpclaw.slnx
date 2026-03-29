@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="sharpclaw/sharpclaw.csproj" DisplayName="SharpClaw" />
+  <Project Path="sharpclaw.Tests/sharpclaw.Tests.csproj" DisplayName="SharpClaw.Tests" />
 </Solution>
