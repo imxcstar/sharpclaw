@@ -22,6 +22,15 @@ By leveraging the `Microsoft.Extensions.AI` abstraction layer, Sharpclaw seamles
 
 * **File System:** Comprehensive file operations including searching, reading, appending, editing, and directory management.
 * **Process & Task Management:** Execute native OS commands, external processes, HTTP requests, and manage background tasks. Tasks support foreground (blocking) and background modes, with full lifecycle management including output streaming (stdout/stderr/combined), stdin writing, keyword/regex-based output waiting, and process tree termination. All background tasks are automatically killed and cleaned up on application exit.
+* **Sandboxed Python:** Run Python code safely inside a WASM sandbox (see [WASM Python Sandbox](#-wasm-python-sandbox) below).
+
+### 🐍 WASM Python Sandbox
+
+* **Sandboxed Execution:** Runs Python code inside a [RustPython](https://github.com/RustPython/RustPython) WASM module via **Wasmtime** (primary) or **Wasmer** (fallback) runtimes, providing strong hardware-level isolation from the host process.
+* **Filesystem Isolation:** File access is strictly limited to `/workspace` (the agent's working directory) and an isolated per-run temporary directory via [WASI](https://wasi.dev/) capability-based security. The host filesystem is completely inaccessible.
+* **Guaranteed Timeout:** Wasmtime's **epoch interruption** mechanism enforces a hard, non-bypassable execution timeout (default 180 s), preventing infinite loops and CPU exhaustion.
+* **No Shell Injection:** `stdout`/`stderr` are captured at the WASI syscall level via native callbacks, completely bypassing the host shell and eliminating shell-injection risks.
+* **Per-Execution Isolation:** Every run creates a fresh WASM engine instance inside a unique GUID-named temporary directory, which is automatically deleted after completion — no state leaks between invocations.
 
 ### 📱 Multi-Channel Support
 
@@ -116,6 +125,12 @@ dotnet run --project sharpclaw config
 │  ├── External Skills — AgentSkillsDotNet plugin loading     │
 │  └── Memory Tools — SearchMemory, GetRecentMemories         │
 ├─────────────────────────────────────────────────────────────┤
+│  WASM Python Sandbox (Services/, Interop/, libs/)            │
+│  ├── WasmtimePythonService — RunPython tool (primary)       │
+│  ├── WasmtimeWasiRuntime — Epoch-timeout WASM executor      │
+│  ├── WasmerWasiRuntime — Fallback WASM executor             │
+│  └── rustpython.wasm — Embedded Python 3 interpreter        │
+├─────────────────────────────────────────────────────────────┤
 │  Core Infrastructure (Core/)                                 │
 │  ├── AgentBootstrap — Shared initialization + skill loading │
 │  ├── SharpclawConfig — Configuration with encryption        │
@@ -150,6 +165,67 @@ The AI engine is decoupled from frontend through `IChatIO` interface:
 - **QQ Bot:** `Channels/QQBot/QQBotServer.cs` — QQ Bot interface
 
 All frontends share the same `MainAgent` logic.
+
+---
+
+## 🛡️ WASM Python Sandbox
+
+Sharpclaw provides a fully isolated, secure Python execution environment using **WebAssembly (WASM)** and **WASI** (WebAssembly System Interface). This allows the AI agent to generate and run Python code without any risk to the host system.
+
+### Runtime Stack
+
+| Component | Technology | Role |
+|-----------|-----------|------|
+| **Python Interpreter** | [RustPython](https://github.com/RustPython/RustPython) compiled to WASM | Python 3 runtime inside sandbox |
+| **Primary Runtime** | [Wasmtime](https://wasmtime.dev/) v43 | WASM executor with epoch-based timeout |
+| **Fallback Runtime** | [Wasmer](https://wasmer.io/) | Alternative executor |
+| **System Interface** | WASI | Capability-based filesystem & I/O abstraction |
+
+### Security Boundaries
+
+| Boundary | Mechanism | Effect |
+|----------|-----------|--------|
+| **Filesystem** | WASI pre-opened directories | Only `/workspace` and a per-run `/sharpclaw_tmp` are accessible |
+| **Memory** | WASM linear memory | Complete isolation from host process memory |
+| **Execution Time** | Wasmtime epoch interruption | Hard, non-bypassable timeout (default 180 s) |
+| **I/O** | WASI syscall-level callbacks | Output captured before reaching the host shell |
+| **Concurrency** | `SemaphoreSlim` mutex | One Python execution at a time, preventing races |
+| **State** | Fresh WASM instance per run | No shared state between invocations |
+
+### Execution Flow
+
+```
+Agent calls RunPython(code, purpose, timeoutSeconds)
+  │
+  ▼
+WasmtimePythonService (acquires mutex)
+  │
+  ▼
+WasmtimeWasiRuntime.ExecuteCode()
+  ├── Create isolated temp dir  (GUID-named, auto-deleted on finish)
+  ├── Write user code to temp file
+  ├── Init Wasmtime engine (epoch interruption enabled)
+  ├── Configure WASI:
+  │     ├── Pre-open /workspace  (rw)
+  │     ├── Pre-open /sharpclaw_tmp  (rw)
+  │     ├── Capture stdout/stderr via native callbacks
+  │     └── Set env vars (PWD=/workspace only)
+  ├── Instantiate rustpython.wasm  +  call _start
+  ├── Start timeout watchdog (Task.Delay → increment epoch)
+  └── Return WasmCommandResult { Success, ExitCode, StdOut, StdErr, TimedOut }
+```
+
+### Capability Matrix
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| Standard Python library | ✅ | Frozen into rustpython.wasm |
+| File I/O in `/workspace` | ✅ | Maps to the agent's working directory on the host |
+| Arbitrary computation | ✅ | No restrictions beyond timeout |
+| Host filesystem (outside workspace) | ❌ | Blocked by WASI capability model |
+| Native extensions (`.so`/`.dll`) | ❌ | WASM cannot load host shared libraries |
+| Spawning host processes | ❌ | No `subprocess`/`os.system` to host |
+| Unrestricted network access | ❌ | No WASI socket mapping by default |
 
 ---
 
