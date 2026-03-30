@@ -40,7 +40,7 @@
 		<None Include="..\libs\wasmtime-v43.0.0-x86_64-windows-c-api\lib\wasmtime.dll" Link="wasmtime.dll" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
-	<ItemGroup Condition="Exists('..\libs\rustpython.wasm')">
+	<ItemGroup Condition="'$(Configuration)' == 'Debug' And Exists('..\libs\rustpython.wasm')">
 		<None Include="..\libs\rustpython.wasm" Link="libs\rustpython.wasm" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 

@@ -4,6 +4,13 @@ using System.Text;
 namespace sharpclaw.Interop;
 
 [StructLayout(LayoutKind.Sequential)]
+internal struct WasmByteVec
+{
+    public nuint Size;
+    public IntPtr Data;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 internal struct WasmtimeInstance
 {
     public ulong StoreId;

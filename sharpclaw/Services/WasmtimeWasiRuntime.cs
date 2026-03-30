@@ -4,6 +4,15 @@ using System.Text;
 
 namespace sharpclaw.Services;
 
+public sealed record WasmCommandResult(
+    bool Success,
+    int ExitCode,
+    string StdOut,
+    string StdErr,
+    uint NativeResultCode,
+    string NativeResultMessage,
+    bool TimedOut);
+
 public sealed class WasmtimeWasiRuntime
 {
     private const string WorkspaceGuestPath = "/workspace";

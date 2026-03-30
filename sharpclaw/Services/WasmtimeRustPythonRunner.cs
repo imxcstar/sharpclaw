@@ -3,6 +3,22 @@ using sharpclaw.Interop;
 
 namespace sharpclaw.Services;
 
+public sealed record WasmPythonExecutionResult(
+    bool Success,
+    int ExitCode,
+    string Data,
+    string Error,
+    uint NativeResultCode,
+    string NativeResultMessage,
+    bool TimedOut);
+
+public interface IRustPythonWasmRunner : IDisposable
+{
+    string WasmPath { get; }
+    void Init(string? workspaceRoot = null);
+    WasmPythonExecutionResult ExecuteCode(string code, string workingDirectory, int timeoutMs = 180000);
+}
+
 public sealed class WasmtimeRustPythonRunner : IRustPythonWasmRunner
 {
     private readonly WasmtimeWasiRuntime _runtime = new();
