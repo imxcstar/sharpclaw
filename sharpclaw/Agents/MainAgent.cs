@@ -152,6 +152,7 @@ public class MainAgent
 
         var wasmPythonService = new WasmtimePythonService(agentContext);
         wasmPythonService.Init();
+        wasmPythonService.SetAgentClient(mainClient);
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()
