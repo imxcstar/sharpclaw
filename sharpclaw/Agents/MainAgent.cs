@@ -2,6 +2,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using sharpclaw.Abstractions;
 using sharpclaw.Chat;
+using sharpclaw.Commands;
 using sharpclaw.Core;
 using sharpclaw.Memory;
 using sharpclaw.Services;
@@ -86,7 +87,7 @@ public class MainAgent
         _agentContext.SetSessionDirPath(sessionDir);
 
         SystemPrompt.AppendLine();
-        SystemPrompt.AppendLine($"[工作目录] {workspaceDir}");
+        SystemPrompt.AppendLine($"[工作目录] /workspace");
         SystemPrompt.Append("- 你的所有文件操作都应基于这个工作目录，且不能访问或修改它之外的文件。");
 
         _workingMemoryPath = _agentContext.GetSessionWorkingMemoryFilePath();
@@ -153,6 +154,9 @@ public class MainAgent
         var wasmPythonService = new WasmtimePythonService(agentContext);
         wasmPythonService.Init();
         wasmPythonService.SetAgentClient(mainClient);
+        wasmPythonService.RegisterIpcHandler("http",
+            HttpCommands.CreateHttpIpcHandler(),
+            HttpCommands.HttpRequestPreamble);
 
         _agent = new ChatClientBuilder(mainClient)
             .UseFunctionInvocation()

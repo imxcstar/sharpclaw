@@ -1,5 +1,6 @@
 using sharpclaw.Core;
 using sharpclaw.Core.TaskManagement;
+using sharpclaw.Services;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -10,6 +11,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -276,6 +278,225 @@ public class HttpCommands : CommandBase
             timeoutMs: timeoutMs <= 0 ? 0 : timeoutMs
         );
     }
+
+    // ── IPC handler for WASM sandbox ──────────────────────────────
+
+    /// <summary>
+    /// Python 封装函数，供沙箱内 Python 代码直接调用。
+    /// <para>签名: <c>http_request(url, method="GET", headers=None, data=None, json_data=None, query=None, form=None, timeout=30000, max_body=8192)</c></para>
+    /// <para>返回: <c>{"status_code": int, "headers": {str: str}, "body": str, "elapsed_ms": int}</c></para>
+    /// </summary>
+    internal const string HttpRequestPreamble =
+        "def http_request(url, method=\"GET\", headers=None, data=None, json_data=None,\n" +
+        "                 query=None, form=None, timeout=30000, max_body=8192):\n" +
+        "    \"\"\"Make an HTTP request from the sandbox.\n" +
+        "    \n" +
+        "    Args:\n" +
+        "        url: Request URL (http/https).\n" +
+        "        method: HTTP method (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS).\n" +
+        "        headers: Dict of request headers, e.g. {\"Authorization\": \"Bearer ...\"}.\n" +
+        "        data: Raw request body string.\n" +
+        "        json_data: JSON request body (dict/list, auto-serialized, sets Content-Type).\n" +
+        "        query: Dict of query parameters, e.g. {\"page\": \"1\"}.\n" +
+        "        form: Dict of form fields (application/x-www-form-urlencoded).\n" +
+        "        timeout: Request timeout in milliseconds (default 30000).\n" +
+        "        max_body: Maximum body characters to return (default 8192).\n" +
+        "    \n" +
+        "    Returns:\n" +
+        "        Dict with keys: status_code (int), headers (dict), body (str), elapsed_ms (int).\n" +
+        "    \"\"\"\n" +
+        "    payload = {\"url\": url, \"method\": method, \"timeout\": timeout, \"max_body\": max_body}\n" +
+        "    if headers:\n" +
+        "        payload[\"headers\"] = headers\n" +
+        "    if data is not None:\n" +
+        "        payload[\"data\"] = data\n" +
+        "    if json_data is not None:\n" +
+        "        payload[\"json\"] = json_data if isinstance(json_data, str) else _json.dumps(json_data)\n" +
+        "    if query:\n" +
+        "        payload[\"query\"] = query\n" +
+        "    if form:\n" +
+        "        payload[\"form\"] = form\n" +
+        "    return _sharpclaw_ipc_call(\"http\", payload)\n" +
+        "\n";
+
+    /// <summary>
+    /// 创建 <c>http</c> IPC handler，用于处理来自 WASM 沙箱的 HTTP 请求。
+    /// <para>
+    /// payload 格式:
+    /// <code>
+    /// {
+    ///   "url": "https://...",
+    ///   "method": "GET",
+    ///   "headers": {"K": "V", ...},     // optional
+    ///   "data": "raw body",              // optional
+    ///   "json": "{ ... }",               // optional (JSON string)
+    ///   "query": {"k": "v", ...},        // optional
+    ///   "form": {"k": "v", ...},         // optional
+    ///   "timeout": 30000,                // optional
+    ///   "max_body": 8192                 // optional
+    /// }
+    /// </code>
+    /// </para>
+    /// </summary>
+    internal static WasmIpcBridge.IpcRequestHandler CreateHttpIpcHandler()
+    {
+        return async (payload, ct) =>
+        {
+            // ── Parse payload ─────────────────────────────────────────
+            if (payload.ValueKind == JsonValueKind.Undefined)
+                return new { _error = "Missing payload" };
+
+            var url = payload.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
+            if (string.IsNullOrWhiteSpace(url))
+                return new { _error = "url is required" };
+
+            var method = payload.TryGetProperty("method", out var mProp) ? mProp.GetString() ?? "GET" : "GET";
+            var timeoutMs = payload.TryGetProperty("timeout", out var tProp) && tProp.TryGetInt32(out var t) ? t : 30_000;
+            var maxBody = payload.TryGetProperty("max_body", out var mbProp) && mbProp.TryGetInt32(out var mb) ? mb : 8192;
+
+            try
+            {
+                var httpMethod = HttpParseMethod(method);
+
+                // ── Build URL with query params ───────────────────────
+                if (payload.TryGetProperty("query", out var queryProp) && queryProp.ValueKind == JsonValueKind.Object)
+                {
+                    var queryPairs = new List<string>();
+                    foreach (var kv in queryProp.EnumerateObject())
+                        queryPairs.Add($"{kv.Name}={kv.Value.GetString()}");
+
+                    if (queryPairs.Count > 0)
+                        url = HttpAppendQuery(url!, queryPairs.ToArray());
+                }
+
+                // ── Configure handler + client ────────────────────────
+                using var handler = new HttpClientHandler
+                {
+                    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+                };
+                using var client = new HttpClient(handler);
+                client.Timeout = timeoutMs <= 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromMilliseconds(timeoutMs);
+
+                using var req = new HttpRequestMessage(httpMethod, url);
+
+                // ── Headers ───────────────────────────────────────────
+                if (payload.TryGetProperty("headers", out var hdrProp) && hdrProp.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var kv in hdrProp.EnumerateObject())
+                    {
+                        var hdrVal = kv.Value.GetString() ?? "";
+                        if (kv.Name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                            continue; // handled via content
+                        req.Headers.TryAddWithoutValidation(kv.Name, hdrVal);
+                    }
+                }
+
+                // ── Request body ──────────────────────────────────────
+                HttpContent? content = null;
+
+                if (payload.TryGetProperty("form", out var formProp) && formProp.ValueKind == JsonValueKind.Object)
+                {
+                    var pairs = new List<KeyValuePair<string, string>>();
+                    foreach (var kv in formProp.EnumerateObject())
+                        pairs.Add(new KeyValuePair<string, string>(kv.Name, kv.Value.GetString() ?? ""));
+                    content = new FormUrlEncodedContent(pairs);
+                }
+                else if (payload.TryGetProperty("json", out var jsonProp))
+                {
+                    var jsonStr = jsonProp.GetString() ?? "{}";
+                    content = new StringContent(jsonStr, Encoding.UTF8, "application/json");
+                }
+                else if (payload.TryGetProperty("data", out var dataProp))
+                {
+                    var data = dataProp.GetString() ?? "";
+                    content = new StringContent(data, Encoding.UTF8, "text/plain");
+                }
+
+                // Apply explicit Content-Type from headers if present
+                if (content != null
+                    && payload.TryGetProperty("headers", out var hdr2)
+                    && hdr2.ValueKind == JsonValueKind.Object
+                    && hdr2.TryGetProperty("Content-Type", out var ctProp))
+                {
+                    content.Headers.Remove("Content-Type");
+                    content.Headers.TryAddWithoutValidation("Content-Type", ctProp.GetString());
+                }
+
+                if (httpMethod == HttpMethod.Head)
+                    content = null;
+
+                req.Content = content;
+
+                // ── Send request ──────────────────────────────────────
+                var sw = Stopwatch.StartNew();
+                using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)
+                    .ConfigureAwait(false);
+                sw.Stop();
+
+                // ── Collect response headers ──────────────────────────
+                var responseHeaders = new Dictionary<string, string>();
+                foreach (var kv in resp.Headers)
+                    responseHeaders[kv.Key] = string.Join(", ", kv.Value);
+                if (resp.Content != null)
+                    foreach (var kv in resp.Content.Headers)
+                        responseHeaders[kv.Key] = string.Join(", ", kv.Value);
+
+                // ── Read body ─────────────────────────────────────────
+                var body = "";
+                if (resp.Content != null && httpMethod != HttpMethod.Head)
+                {
+                    var captureBytesLimit = Math.Max(0, maxBody) * 4;
+                    await using var rs = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                    using var ms = new MemoryStream(Math.Min(captureBytesLimit, 256 * 1024));
+                    var buf = new byte[8192];
+                    int n;
+                    long total = 0;
+                    while ((n = await rs.ReadAsync(buf, 0, buf.Length, ct).ConfigureAwait(false)) > 0)
+                    {
+                        total += n;
+                        if (ms.Length < captureBytesLimit)
+                        {
+                            var toWrite = (int)Math.Min(n, captureBytesLimit - ms.Length);
+                            if (toWrite > 0) ms.Write(buf, 0, toWrite);
+                        }
+                        // Keep draining to avoid connection issues, but cap memory
+                        if (total > captureBytesLimit * 2) break;
+                    }
+
+                    var captured = ms.ToArray();
+                    if (captured.Length > 0)
+                    {
+                        var enc = HttpGetResponseEncoding(resp) ?? Encoding.UTF8;
+                        body = enc.GetString(captured);
+                        if (maxBody >= 0 && body.Length > maxBody)
+                            body = body[..maxBody];
+                    }
+                }
+
+                return new
+                {
+                    status_code = (int)resp.StatusCode,
+                    headers = responseHeaders,
+                    body,
+                    elapsed_ms = (int)sw.ElapsedMilliseconds
+                };
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                return new { _error = $"Request timed out: {ex.Message}" };
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // Let the bridge handle cancellation
+            }
+            catch (Exception ex)
+            {
+                return new { _error = $"{ex.GetType().Name}: {ex.Message}" };
+            }
+        };
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────
 
     private static HttpMethod HttpParseMethod(string? s)
     {

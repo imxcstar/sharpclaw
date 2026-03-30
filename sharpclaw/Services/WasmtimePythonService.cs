@@ -167,9 +167,9 @@ public sealed class WasmtimePythonService : CommandBase, IDisposable
 
     // ── Main execution ──────────────────────────────────────────────
 
-    [Description("执行 Python 代码 (Wasmtime 运行时)。代码会在 /workspace 中运行，支持 epoch 超时中断。代码中可直接调用 call_agent(prompt, system_prompt=\"\") 函数来请求 AI 智能体处理问题并获取文本回复。")]
+    [Description("执行 Python 代码 (Wasmtime 运行时)。代码会在 /workspace 中运行，支持 epoch 超时中断。代码中可直接调用 call_agent(prompt, system_prompt=\"\") 函数来请求 AI 智能体处理问题并获取文本回复，也可调用 http_request(url, method=\"GET\", headers=None, data=None, json_data=None, query=None, form=None, timeout=30000, max_body=8192) 函数发起 HTTP 请求并获取响应（返回 dict 含 status_code/headers/body/elapsed_ms）。")]
     public string RunPython(
-        [Description("python 代码，建议打印出字符串，方便接收信息。可使用内置函数 call_agent(prompt, system_prompt) 调用 AI 智能体。")] string code,
+        [Description("python 代码，建议打印出字符串，方便接收信息。可使用内置函数 call_agent(prompt, system_prompt) 调用 AI 智能体，http_request(url, ...) 发起 HTTP 请求。")] string code,
         [Description("执行这个代码的目的，需要达成什么效果（必填）")] string purpose,
         [Description("运行超时时间，单位：秒，默认：180 秒 (选填)")] int timeOut = 180,
         [Description("Working directory (optional)")] string workingDirectory = "")
