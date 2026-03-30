@@ -22,9 +22,6 @@ public sealed class WasmtimePythonService : CommandBase, IDisposable
     private bool _isInitialized;
     private IChatClient? _agentClient;
 
-    /// <summary>Exit code used by the Python <c>call_agent()</c> function to signal an agent call request.</summary>
-    private const int AgentCallExitCode = 42;
-
     /// <summary>Maximum number of agent calls allowed within a single <see cref="RunPython"/> invocation.</summary>
     private const int MaxAgentCallsPerExecution = 10;
 
@@ -33,45 +30,52 @@ public sealed class WasmtimePythonService : CommandBase, IDisposable
 
     /// <summary>
     /// Python preamble that defines the <c>call_agent(prompt, system_prompt="")</c> function.
-    /// Uses file-based IPC with iterative re-execution to bridge the WASM sandbox and the host agent.
+    /// Uses file-based IPC with in-process polling to bridge the WASM sandbox and the host agent.
     /// <para>
     /// Protocol:
     /// <list type="number">
-    ///   <item>On first call to <c>call_agent()</c>, writes a request to <c>/workspace/.sharpclaw_ipc/request.json</c> and exits with code 42.</item>
-    ///   <item>The C# host detects exit code 42, reads the request, calls the LLM, and writes the response to <c>responses.json</c>.</item>
-    ///   <item>The Python code is re-executed. On re-execution, <c>call_agent()</c> reads the cached response and returns it.</item>
-    ///   <item>Multiple <c>call_agent()</c> calls are supported via an index-based response accumulation pattern.</item>
+    ///   <item><c>call_agent()</c> writes a request to <c>/workspace/.sharpclaw_ipc/request_{index}.json</c> (atomic via tmp+rename).</item>
+    ///   <item>Python polls for <c>response_{index}.json</c> in a sleep loop (100ms interval).</item>
+    ///   <item>The C# host concurrently monitors the IPC directory, reads the request, calls the LLM, and writes the response atomically.</item>
+    ///   <item>Python detects the response file, reads the result, cleans up, and returns — no re-execution needed.</item>
     /// </list>
     /// </para>
     /// </summary>
     private const string AgentPreamble =
-        "import json as _json, os as _os, sys as _sys\n" +
+        "import json as _json, os as _os\n" +
+        "try:\n" +
+        "    import time as _time\n" +
+        "    _sharpclaw_sleep = _time.sleep\n" +
+        "except Exception:\n" +
+        "    def _sharpclaw_sleep(s):\n" +
+        "        pass\n" +
         "\n" +
         "_SHARPCLAW_IPC = \"/workspace/.sharpclaw_ipc\"\n" +
-        "_SHARPCLAW_REQ = _os.path.join(_SHARPCLAW_IPC, \"request.json\")\n" +
-        "_SHARPCLAW_RESP = _os.path.join(_SHARPCLAW_IPC, \"responses.json\")\n" +
         "_sharpclaw_call_idx = 0\n" +
-        "_sharpclaw_responses = []\n" +
-        "if _os.path.exists(_SHARPCLAW_RESP):\n" +
-        "    try:\n" +
-        "        with open(_SHARPCLAW_RESP, \"r\") as _f:\n" +
-        "            _sharpclaw_responses = _json.load(_f)\n" +
-        "    except Exception:\n" +
-        "        _sharpclaw_responses = []\n" +
         "\n" +
         "def call_agent(prompt, system_prompt=\"\"):\n" +
         "    # Call AI agent with a prompt and get a text response.\n" +
         "    # prompt: the question or instruction for the agent\n" +
         "    # system_prompt: optional system prompt to set agent behavior\n" +
         "    global _sharpclaw_call_idx\n" +
-        "    if _sharpclaw_call_idx < len(_sharpclaw_responses):\n" +
-        "        _r = _sharpclaw_responses[_sharpclaw_call_idx][\"result\"]\n" +
-        "        _sharpclaw_call_idx += 1\n" +
-        "        return _r\n" +
+        "    _idx = _sharpclaw_call_idx\n" +
+        "    _sharpclaw_call_idx += 1\n" +
         "    _os.makedirs(_SHARPCLAW_IPC, exist_ok=True)\n" +
-        "    with open(_SHARPCLAW_REQ, \"w\") as _f:\n" +
-        "        _json.dump({\"prompt\": prompt, \"system_prompt\": system_prompt, \"call_index\": _sharpclaw_call_idx}, _f)\n" +
-        "    _sys.exit(42)\n" +
+        "    _req = _os.path.join(_SHARPCLAW_IPC, \"request_\" + str(_idx) + \".json\")\n" +
+        "    _resp = _os.path.join(_SHARPCLAW_IPC, \"response_\" + str(_idx) + \".json\")\n" +
+        "    _tmp = _req + \".tmp\"\n" +
+        "    with open(_tmp, \"w\") as _f:\n" +
+        "        _json.dump({\"prompt\": prompt, \"system_prompt\": system_prompt, \"call_index\": _idx}, _f)\n" +
+        "    _os.rename(_tmp, _req)\n" +
+        "    while not _os.path.exists(_resp):\n" +
+        "        _sharpclaw_sleep(0.1)\n" +
+        "    with open(_resp, \"r\") as _f:\n" +
+        "        _result = _json.load(_f)[\"result\"]\n" +
+        "    try:\n" +
+        "        _os.remove(_resp)\n" +
+        "    except Exception:\n" +
+        "        pass\n" +
+        "    return _result\n" +
         "\n";
 
     public WasmtimePythonService(IAgentContext agentContext, Func<IRustPythonWasmRunner>? runnerFactory = null)
@@ -128,33 +132,50 @@ public sealed class WasmtimePythonService : CommandBase, IDisposable
             try
             {
                 var ipcDir = Path.Combine(executionDirectory, AgentIpcDirName);
-                var agentCallCount = 0;
 
                 try
                 {
-                    while (true)
-                    {
-                        var result = _runner!.ExecuteCode(preparedCode, executionDirectory, timeOut * 1000);
+                    // Ensure IPC directory exists before Python starts
+                    if (_agentClient != null)
+                        Directory.CreateDirectory(ipcDir);
 
-                        // ── Check for agent call request (exit code 42 + request file) ──
-                        if (!result.Success
-                            && result.ExitCode == AgentCallExitCode
-                            && _agentClient != null)
+                    // ── Run Python in background thread (ExecuteCode is blocking) ──
+                    var pythonTask = Task.Run(
+                        () => _runner!.ExecuteCode(preparedCode, executionDirectory, timeOut * 1000), ct);
+
+                    // ── Concurrently monitor IPC directory for agent call requests ──
+                    if (_agentClient != null)
+                    {
+                        var agentCallCount = 0;
+                        var nextExpectedIndex = 0;
+
+                        while (!pythonTask.IsCompleted)
                         {
-                            var requestFile = Path.Combine(ipcDir, "request.json");
+                            if (agentCallCount >= MaxAgentCallsPerExecution)
+                                break; // Stop monitoring; Python will eventually timeout waiting for response
+
+                            var requestFile = Path.Combine(ipcDir, $"request_{nextExpectedIndex}.json");
                             if (File.Exists(requestFile))
                             {
-                                if (agentCallCount >= MaxAgentCallsPerExecution)
-                                {
-                                    ctx.WriteStderrLine(
-                                        $"ERROR: Maximum agent call count ({MaxAgentCallsPerExecution}) exceeded in single Python execution.");
-                                    return 1;
-                                }
-
                                 agentCallCount++;
 
-                                var request = JsonSerializer.Deserialize<AgentCallRequest>(
-                                    await File.ReadAllTextAsync(requestFile, ct));
+                                // Read request (with one retry in case of partial write)
+                                AgentCallRequest? request = null;
+                                try
+                                {
+                                    var json = await File.ReadAllTextAsync(requestFile, ct);
+                                    request = JsonSerializer.Deserialize<AgentCallRequest>(json);
+                                }
+                                catch (Exception ex) when (ex is not OperationCanceledException)
+                                {
+                                    await Task.Delay(100, ct);
+                                    try
+                                    {
+                                        var json = await File.ReadAllTextAsync(requestFile, ct);
+                                        request = JsonSerializer.Deserialize<AgentCallRequest>(json);
+                                    }
+                                    catch { /* give up on this request */ }
+                                }
 
                                 ctx.WriteStdoutLine(
                                     $"[Agent Call #{agentCallCount}] {Truncate(request?.Prompt, 120)}");
@@ -176,54 +197,68 @@ public sealed class WasmtimePythonService : CommandBase, IDisposable
                                     responseText = $"[Agent Error: {ex.GetType().Name}: {ex.Message}]";
                                 }
 
-                                // Append response to accumulated responses file
-                                var responsesFile = Path.Combine(ipcDir, "responses.json");
-                                List<AgentCallResponse> responses = [];
-                                if (File.Exists(responsesFile))
-                                {
-                                    responses = JsonSerializer.Deserialize<List<AgentCallResponse>>(
-                                        await File.ReadAllTextAsync(responsesFile, ct)) ?? [];
-                                }
-                                responses.Add(new AgentCallResponse { Result = responseText });
-                                await File.WriteAllTextAsync(responsesFile,
-                                    JsonSerializer.Serialize(responses), ct);
+                                // Write response atomically (tmp + rename) so Python never reads a partial file
+                                var responseFile = Path.Combine(ipcDir, $"response_{nextExpectedIndex}.json");
+                                var tempFile = responseFile + ".tmp";
+                                await File.WriteAllTextAsync(tempFile,
+                                    JsonSerializer.Serialize(new AgentCallResponse { Result = responseText }), ct);
+                                File.Move(tempFile, responseFile, overwrite: true);
 
-                                File.Delete(requestFile);
-                                continue; // Re-execute Python code with updated responses
-                            }
-                        }
+                                // Clean up request file
+                                try { File.Delete(requestFile); } catch { /* best effort */ }
 
-                        // ── Normal completion ───────────────────────────────────────
-                        if (result.Success)
-                        {
-                            var builder = new StringBuilder();
-                            if (!string.IsNullOrEmpty(result.Data))
-                                builder.Append(result.Data);
-                            if (!string.IsNullOrEmpty(result.Error))
-                            {
-                                if (builder.Length > 0)
-                                    builder.AppendLine();
-
-                                builder.Append("STDERR:\n").Append(result.Error);
+                                nextExpectedIndex++;
+                                continue; // Check for next request immediately
                             }
 
-                            ctx.WriteStdoutLine(builder.Length == 0 ? "OK" : builder.ToString());
-                            return 0;
+                            // Poll interval
+                            try { await Task.Delay(50, ct); }
+                            catch (OperationCanceledException) { break; }
                         }
+                    }
 
-                        // ── Error ───────────────────────────────────────────────────
-                        var errorBuilder = new StringBuilder();
-                        if (result.TimedOut)
-                            errorBuilder.Append(result.NativeResultMessage);
-                        else
-                            errorBuilder.Append($"Exit code: {result.ExitCode}, Runtime code: {result.NativeResultCode}, Message: {result.NativeResultMessage}");
-
-                        if (!string.IsNullOrEmpty(result.Error))
-                            errorBuilder.Append("\n\nSTDERR:\n").Append(result.Error);
-
-                        ctx.WriteStderrLine($"ERROR: {errorBuilder}");
+                    // ── Await Python completion ─────────────────────────────────
+                    WasmPythonExecutionResult result;
+                    try
+                    {
+                        result = await pythonTask;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        ctx.WriteStderrLine("ERROR: Execution cancelled.");
                         return 1;
                     }
+
+                    // ── Normal completion ────────────────────────────────────────
+                    if (result.Success)
+                    {
+                        var builder = new StringBuilder();
+                        if (!string.IsNullOrEmpty(result.Data))
+                            builder.Append(result.Data);
+                        if (!string.IsNullOrEmpty(result.Error))
+                        {
+                            if (builder.Length > 0)
+                                builder.AppendLine();
+
+                            builder.Append("STDERR:\n").Append(result.Error);
+                        }
+
+                        ctx.WriteStdoutLine(builder.Length == 0 ? "OK" : builder.ToString());
+                        return 0;
+                    }
+
+                    // ── Error ────────────────────────────────────────────────────
+                    var errorBuilder = new StringBuilder();
+                    if (result.TimedOut)
+                        errorBuilder.Append(result.NativeResultMessage);
+                    else
+                        errorBuilder.Append($"Exit code: {result.ExitCode}, Runtime code: {result.NativeResultCode}, Message: {result.NativeResultMessage}");
+
+                    if (!string.IsNullOrEmpty(result.Error))
+                        errorBuilder.Append("\n\nSTDERR:\n").Append(result.Error);
+
+                    ctx.WriteStderrLine($"ERROR: {errorBuilder}");
+                    return 1;
                 }
                 finally
                 {
