@@ -1,3 +1,4 @@
+using ConsoleInk;
 using sharpclaw.Abstractions;
 using System.Text;
 using System.Threading.Channels;
@@ -33,12 +34,30 @@ public sealed class CliChatIO : IChatIO, IDisposable
     private volatile bool _acceptingInput;
 
     private static readonly bool SupportsColor = !Console.IsOutputRedirected;
+    private MarkdownConsoleWriter _markdownConsoleWriter;
+    private static int TryGetConsoleWidth(int defaultWidth)
+    {
+        try
+        {
+            // Check if Console is redirected, WindowWidth might throw an exception
+            if (!Console.IsOutputRedirected)
+            {
+                return Console.WindowWidth > 0 ? Console.WindowWidth : defaultWidth;
+            }
+        }
+        catch (IOException)
+        {
+            // Ignore if Console.WindowWidth is not available (e.g., redirected output)
+        }
+        return defaultWidth;
+    }
 
     public CliChatIO()
     {
         Console.OutputEncoding = Encoding.UTF8;
         _inputThread = new Thread(ReadInputLoop) { IsBackground = true, Name = "CliInputThread" };
         _inputThread.Start();
+        _markdownConsoleWriter = new MarkdownConsoleWriter(Console.Out);
     }
 
     private void ReadInputLoop()
@@ -299,6 +318,7 @@ public sealed class CliChatIO : IChatIO, IDisposable
                 // 动画还在显示，清除动画行
                 Console.Write('\r');
                 EraseToEnd();
+                _markdownConsoleWriter.Complete();
             }
         }
     }
@@ -360,8 +380,10 @@ public sealed class CliChatIO : IChatIO, IDisposable
                 }
             }
 
-            Console.Write(text);
-            Console.Out.Flush();
+            _markdownConsoleWriter.Write(text);
+            _markdownConsoleWriter.Flush();
+            //Console.Write(text);
+            //Console.Out.Flush();
         }
     }
 
@@ -417,5 +439,6 @@ public sealed class CliChatIO : IChatIO, IDisposable
         RequestStop();
         _stopCts.Dispose();
         _aiCts?.Dispose();
+        _markdownConsoleWriter.Dispose();
     }
 }

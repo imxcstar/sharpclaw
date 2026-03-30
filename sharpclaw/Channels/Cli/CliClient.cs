@@ -1,3 +1,4 @@
+using ConsoleInk;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -24,12 +25,14 @@ public sealed class CliClient : IDisposable
     private volatile bool _acceptingInput;
 
     private static readonly bool SupportsColor = !Console.IsOutputRedirected;
+    private MarkdownConsoleWriter _markdownConsoleWriter;
 
     public CliClient(string serverUrl) { _serverUrl = serverUrl; }
 
     public async Task RunAsync()
     {
         Console.OutputEncoding = Encoding.UTF8;
+        _markdownConsoleWriter = new MarkdownConsoleWriter(Console.Out);
 
         _ws = new ClientWebSocket();
         try
@@ -352,8 +355,10 @@ public sealed class CliClient : IDisposable
                     EraseToEnd();
                 }
             }
-            Console.Write(text);
-            Console.Out.Flush();
+
+            _markdownConsoleWriter.Write(text);
+            _markdownConsoleWriter.Flush();
+            //Console.Out.Flush();
         }
     }
 
@@ -386,6 +391,7 @@ public sealed class CliClient : IDisposable
             {
                 Console.Write('\r');
                 EraseToEnd();
+                _markdownConsoleWriter.Complete();
             }
         }
     }
@@ -412,5 +418,6 @@ public sealed class CliClient : IDisposable
         StopAnimation();
         _ws?.Dispose();
         _stopCts.Dispose();
+        _markdownConsoleWriter.Dispose();
     }
 }
